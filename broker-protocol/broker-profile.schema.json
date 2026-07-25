@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://broker-bridge.dev/schema/broker-profile.schema.json",
+  "title": "Broker Bridge profile",
+  "description": "Non-secret metadata for an approved API broker. A profile never carries vendor credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profileId", "broker", "identity", "routes"],
+  "properties": {
+    "profileId": { "type": "string", "minLength": 1 },
+    "minimumAgentVersion": { "type": "string" },
+    "broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "routingMode"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "routingMode": { "enum": ["strict", "named"] }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "scopes"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "scopes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slug"],
+        "properties": {
+          "slug": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "adapterHints": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

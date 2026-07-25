@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Vendor API client with NO vendor credentials. Authenticates with its own Entra identity
+       (DefaultAzureCredential: az login for devs, or AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET for
+       a service principal) to the key broker. The broker holds the vendor credential in
+       Key Vault and performs any OAuth exchange server-side. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>KeyBroker.Client</RootNamespace>
+    <AssemblyName>broker-client</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.13.1" />
+  </ItemGroup>
+
+</Project>

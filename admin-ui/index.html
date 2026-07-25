@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>API Key Broker Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f8bff'/%3E%3Cstop offset='1' stop-color='%231e4fc2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='4' y='4' width='24' height='24' rx='6' fill='url(%23g)'/%3E%3Ccircle cx='16' cy='13' r='4' fill='%23fff'/%3E%3Crect x='14.5' y='15' width='3' height='9' rx='1.5' fill='%23fff'/%3E%3C/svg%3E" />
+<style>
+  :root {
+    --accent:#2f6fed; --accent-2:#4f8bff; --accent-deep:#1e4fc2;
+    --ink:#23272E; --ink-2:#3a4150; --muted:#5c6470;
+    --bg:#f4f6f8; --card:#ffffff; --line:#e3e6ea; --line-2:#dfe3e8;
+    --ok:#1e9e5a; --bad:#c0392b; --warn:#d98a00;
+    --shadow:0 1px 2px rgba(35,39,46,.06), 0 4px 14px rgba(35,39,46,.06);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+
+  /* ---------- header ---------- */
+  header { background:var(--ink); color:#fff; padding:0 32px; height:64px;
+           display:flex; align-items:center; gap:16px; box-shadow:var(--shadow); }
+  .mark { width:34px; height:34px; flex:none; }
+  .wordmark { display:flex; flex-direction:column; line-height:1.15; }
+  .wordmark b { font-size:15px; letter-spacing:.14em; font-weight:700; }
+  .wordmark b .accent { color:var(--accent-2); }
+  .wordmark span { font-size:11.5px; color:#aeb6c4; letter-spacing:.02em; }
+  header .spacer { flex:1; }
+  .envchip { font-size:12px; background:var(--ink-2); border:1px solid #4a5266;
+             color:#dfe3e8; border-radius:999px; padding:5px 14px; cursor:pointer; }
+  .envchip:hover { border-color:var(--accent-2); }
+  .brandbar { height:3px; background:linear-gradient(90deg, var(--accent-deep), var(--accent) 40%, var(--accent-2)); }
+
+  /* ---------- layout ---------- */
+  main { max-width:1120px; margin:0 auto; padding:26px 32px 30px; display:grid; gap:22px; }
+  .tiles { display:grid; grid-template-columns:repeat(4, 1fr); gap:16px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px 16px; box-shadow:var(--shadow); cursor:pointer; transition:border-color .15s; }
+  .tile:hover { border-color:var(--accent); }
+  .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .tile .v { font-size:14px; font-weight:600; margin-top:4px; word-break:break-all; }
+  .tile .s { font-size:11.5px; color:var(--muted); margin-top:2px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:20px 22px; box-shadow:var(--shadow); }
+  .card > h2 { margin:0 0 4px; font-size:15px; font-weight:700; }
+  .card > .sub { font-size:12.5px; color:var(--muted); margin:0 0 14px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:22px; align-items:start; }
+  @media (max-width: 900px) { .tiles { grid-template-columns:1fr 1fr; } .grid2 { grid-template-columns:1fr; } }
+
+  /* ---------- controls ---------- */
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; }
+  tr:last-child td { border-bottom:none; }
+  button { border:none; border-radius:8px; padding:9px 16px; font-weight:600; font-size:13px;
+           cursor:pointer; background:linear-gradient(180deg, var(--accent), var(--accent-deep));
+           color:#fff; transition:filter .15s; }
+  button:hover { filter:brightness(1.07); }
+  button.ghost { background:#fff; color:var(--ink-2); border:1px solid var(--line-2); }
+  button.ghost:hover { border-color:var(--accent); color:var(--accent-deep); filter:none; }
+  button.danger { background:#fff; color:var(--bad); border:1px solid var(--line-2); }
+  button.danger:hover { border-color:var(--bad); }
+  button.small { padding:5px 11px; font-size:12px; }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select { background:#fff; color:var(--ink); border:1px solid var(--line-2);
+                  border-radius:8px; padding:9px 11px; font-size:13px; width:100%; }
+  input:focus, select:focus { outline:2px solid rgba(47,111,237,.35); border-color:var(--accent); }
+  label { display:block; font-size:12px; color:var(--muted); margin:11px 0 4px; font-weight:600; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; }
+  .ok { background:var(--ok); } .bad { background:var(--bad); }
+  code, .mono { background:#f4f6f8; border:1px solid var(--line); padding:1px 7px; border-radius:6px;
+                font:12px ui-monospace, Consolas, monospace; }
+  .chip { display:inline-block; font-size:11px; color:var(--muted); background:#f4f6f8;
+          border:1px solid var(--line); border-radius:999px; padding:2px 10px; }
+  .radio { display:flex; gap:20px; margin:8px 0 2px; }
+  .radio label { margin:0; display:flex; gap:7px; align-items:center; color:var(--ink); font-weight:500; }
+  .radio input { width:auto; }
+  .hidden { display:none; }
+  .actions { display:flex; gap:10px; margin-top:16px; align-items:center; flex-wrap:wrap; }
+
+  /* ---------- toasts + footer ---------- */
+  #toasts { position:fixed; top:76px; right:24px; display:flex; flex-direction:column; gap:10px; z-index:50; }
+  .toast { background:var(--ink); color:#fff; border-left:4px solid var(--accent-2); border-radius:8px;
+           padding:11px 16px; font-size:13px; box-shadow:var(--shadow); max-width:380px;
+           animation:slide .2s ease-out; }
+  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--bad); }
+  @keyframes slide { from { transform:translateX(20px); opacity:0; } to { transform:none; opacity:1; } }
+  footer { max-width:1120px; margin:0 auto; padding:0 32px 40px; color:var(--muted); font-size:12px;
+           display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<header>
+  <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+    <defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f8bff"/><stop offset="1" stop-color="#1e4fc2"/>
+    </linearGradient></defs>
+    <rect x="4" y="4" width="24" height="24" rx="6" fill="url(#ag)"/>
+    <circle cx="16" cy="13" r="4" fill="#fff"/>
+    <rect x="14.5" y="15" width="3" height="9" rx="1.5" fill="#fff"/>
+  </svg>
+  <div class="wordmark">
+    <b id="brandName">API KEY BROKER</b>
+    <span>Admin Console</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="envchip" id="envchip" title="Click to copy the broker endpoint">…</button>
+</header>
+<div class="brandbar"></div>
+
+<main>
+
+  <div class="tiles">
+    <div class="tile" id="tHealth" title="Click to re-check broker health">
+      <div class="k">Broker</div>
+      <div class="v" id="tHealthV">checking…</div>
+      <div class="s" id="tHealthS">&nbsp;</div>
+    </div>
+    <div class="tile" onclick="copyText(STATE?.config.app, 'Function app name copied')" title="Click to copy">
+      <div class="k">Function App</div>
+      <div class="v" id="tApp">—</div>
+      <div class="s" id="tAppS">&nbsp;</div>
+    </div>
+    <div class="tile" onclick="copyText(STATE?.config.vault, 'Key Vault name copied')" title="Click to copy">
+      <div class="k">Key Vault</div>
+      <div class="v" id="tVault">—</div>
+      <div class="s" id="tVaultS">&nbsp;</div>
+    </div>
+    <div class="tile" onclick="copyText(STATE?.app.appId, 'Entra application (client) ID copied')" title="Click to copy">
+      <div class="k">Entra App</div>
+      <div class="v" id="tEntra">—</div>
+      <div class="s" id="tEntraS">&nbsp;</div>
+    </div>
+  </div>
+
+  <div class="grid2">
+
+    <section class="card">
+      <h2>Add or update a key</h2>
+      <p class="sub">Values are write-only: stored in Key Vault, never displayed again. The broker
+        picks up changes within 5 minutes, or restart it to apply immediately.</p>
+      <label>Key Vault secret name</label>
+      <input id="secName" list="secNames" placeholder="e.g. vendor-key-a" />
+      <datalist id="secNames"></datalist>
+      <label>Credential type</label>
+      <div class="radio">
+        <label><input type="radio" name="kind" value="single" checked onchange="kindChanged()"> Single key / token</label>
+        <label><input type="radio" name="kind" value="pair" onchange="kindChanged()"> ID + secret pair</label>
+      </div>
+      <div id="singleFields">
+        <label>Key value</label>
+        <input id="secValue" type="password" autocomplete="off" placeholder="paste the key or token" />
+      </div>
+      <div id="pairFields" class="hidden">
+        <div class="row">
+          <div><label>ID / client ID</label><input id="pairId" type="password" autocomplete="off" /></div>
+          <div><label>Secret</label><input id="pairSecret" type="password" autocomplete="off" /></div>
+        </div>
+        <div class="row">
+          <div><label>ID field name (JSON)</label><input id="pairIdField" value="client_id" /></div>
+          <div><label>Secret field name (JSON)</label><input id="pairSecretField" value="client_secret" /></div>
+        </div>
+        <p class="sub" style="margin:8px 0 0;">Stored as one JSON secret so both halves rotate atomically.</p>
+      </div>
+      <div class="actions">
+        <button onclick="saveSecret(this)">Save key to vault</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Vault secrets</h2>
+      <p class="sub">Secrets currently in <span class="mono" id="vaultName">…</span>. Names only — values are never readable here.</p>
+      <table id="secretsTable">
+        <thead><tr><th>Name</th><th>Last updated</th><th style="width:1%"></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+  </div>
+
+  <section class="card">
+    <h2>Roles &amp; vendor mappings</h2>
+    <p class="sub">Each Entra app role grants exactly one vendor credential. Broker defaults for
+      unconfigured fields: <span class="chip" id="defaultsChip">…</span></p>
+    <table id="rolesTable">
+      <thead><tr><th>App role</th><th>Secret</th><th>Vendor base URL</th><th>Inject</th><th style="width:1%">Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Mapping editor</h2>
+    <p class="sub">Configure how a role resolves to a vendor credential and how the broker injects it.
+      Saving updates the <span class="mono">ROLE_SECRET_MAP</span> app setting; restart the broker to apply.</p>
+    <div class="row3">
+      <div><label>Role</label><select id="mRole" onchange="loadMapping(this.value)"></select></div>
+      <div><label>Secret name</label><input id="mSecret" list="secNames" /></div>
+      <div><label>Inject mode</label>
+        <select id="mInject">
+          <option value="">(broker default)</option>
+          <option value="header">header — key in a header</option>
+          <option value="bearer">bearer — Authorization: Bearer key</option>
+          <option value="basic">basic — HTTP Basic id:secret</option>
+          <option value="pair">pair — id + secret as two headers</option>
+          <option value="oauth2cc">oauth2cc — server-side OAuth exchange</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Vendor base URL (blank = broker default)</label><input id="mBase" placeholder="https://vendor.example.com" /></div>
+      <div><label>OAuth token URL (oauth2cc only)</label><input id="mToken" placeholder="https://vendor.example.com/oauth/token" /></div>
+    </div>
+    <div class="row3">
+      <div><label>OAuth scope</label><input id="mScope" placeholder="scope1 scope2" /></div>
+      <div><label>ID field (pair / oauth2cc)</label><input id="mIdField" placeholder="client_id" /></div>
+      <div><label>Secret field (pair / oauth2cc)</label><input id="mSecretField" placeholder="client_secret" /></div>
+    </div>
+    <div class="actions">
+      <button onclick="saveMapping(this)">Save mapping</button>
+      <button class="ghost" onclick="restart(this)">Restart broker</button>
+      <span class="chip">Mapping changes require a restart</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span id="brandFoot">Internal operations tooling. Managed identity &amp; Easy Auth enforced server-side; no credentials stored in this console.</span>
+  <span id="lastRefresh">—</span>
+</footer>
+<div id="toasts"></div>
+
+<script>
+let STATE = null;
+
+const el = (id) => document.getElementById(id);
+
+function toast(text, ok = true) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (ok ? 'ok' : 'bad');
+  t.textContent = text;
+  el('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 4200);
+}
+
+async function copyText(text, msg) {
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); toast(msg || 'Copied'); }
+  catch { toast('Clipboard unavailable', false); }
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+const post = (path, payload) => api(path, { method: 'POST',
+  headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload ?? {}) });
+
+const entryOf = (map, role) => {
+  const e = map[role];
+  return e ? (typeof e === 'string' ? { secret: e } : e) : null;
+};
+
+async function refresh(showToast = false) {
+  try {
+    STATE = await api('/api/state');
+  } catch (e) {
+    el('tHealthV').innerHTML = '<span class="dot bad"></span>console error';
+    el('tHealthS').textContent = e.message;
+    toast('Failed to load state: ' + e.message, false);
+    return;
+  }
+  const { config, health, roleMap, defaults, app, secrets } = STATE;
+
+  if (STATE.brandName) {
+    el('brandName').textContent = STATE.brandName.toUpperCase();
+    document.title = `${STATE.brandName} — API Key Broker Console`;
+  }
+  el('envchip').textContent = config.brokerUrl.replace(/^https:\/\//, '').split('/')[0];
+  el('tHealthV').innerHTML = health.healthy
+    ? '<span class="dot ok"></span>Protected &amp; responding'
+    : '<span class="dot bad"></span>Unhealthy';
+  el('tHealthS').textContent = health.healthy
+    ? `unauthenticated → ${health.status} (auth gate enforcing)`
+    : `expected 401, got ${health.status || health.error}`;
+  el('tApp').textContent = config.app;
+  el('tAppS').textContent = config.rg;
+  el('tVault').textContent = config.vault;
+  el('tVaultS').textContent = `${secrets.length} secret${secrets.length === 1 ? '' : 's'}`;
+  el('tEntra').textContent = app.displayName || '—';
+  el('tEntraS').textContent = app.appId ? app.appId : (app.error || '');
+  el('vaultName').textContent = config.vault;
+  el('defaultsChip').textContent =
+    `base URL: ${defaults.vendorBaseUrl || '(none)'} · inject: ${defaults.injectMode}`;
+
+  // roles table + editor role select
+  const tb = el('rolesTable').querySelector('tbody');
+  const sel = el('mRole');
+  const selected = sel.value;
+  tb.innerHTML = ''; sel.innerHTML = '';
+  for (const r of (app.roles || [])) {
+    const e = entryOf(roleMap, r.value);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${r.displayName}</b><br><span class="chip">${r.value}</span></td>
+      <td>${e?.secret ? '<code>' + e.secret + '</code>' : '<span class="chip">unmapped</span>'}</td>
+      <td>${e?.baseUrl || '<span class="chip">default</span>'}</td>
+      <td>${e?.inject || '<span class="chip">default</span>'}</td>
+      <td style="white-space:nowrap;">
+        <button class="small ghost" onclick="loadMapping('${r.value}'); document.getElementById('mSecret').focus();">Edit</button>
+        <button class="small ghost" onclick="probe(this, '${r.value}')" ${e ? '' : 'disabled title="Map this role first"'}>Probe vendor</button>
+        <button class="small danger" onclick="unmap(this, '${r.value}')" ${e ? '' : 'disabled'}>Unmap</button>
+      </td>`;
+    tb.appendChild(tr);
+    const o = document.createElement('option'); o.value = r.value; o.textContent = r.value; sel.appendChild(o);
+  }
+  if (selected) sel.value = selected;
+
+  // secrets table + name suggestions
+  const st = el('secretsTable').querySelector('tbody');
+  const dl = el('secNames');
+  st.innerHTML = ''; dl.innerHTML = '';
+  for (const s of secrets) {
+    const tr = document.createElement('tr');
+    const when = s.updated ? new Date(s.updated).toLocaleString() : '—';
+    tr.innerHTML = `<td><code>${s.name}</code></td><td>${when}</td>
+      <td><button class="small ghost" onclick="prefillSecret('${s.name}')">Update value</button></td>`;
+    st.appendChild(tr);
+    const o = document.createElement('option'); o.value = s.name; dl.appendChild(o);
+  }
+
+  el('lastRefresh').textContent = 'Last refreshed ' + new Date().toLocaleTimeString();
+  if (showToast) toast('Refreshed');
+}
+
+function kindChanged() {
+  const pair = document.querySelector('input[name=kind]:checked').value === 'pair';
+  el('pairFields').classList.toggle('hidden', !pair);
+  el('singleFields').classList.toggle('hidden', pair);
+}
+
+function prefillSecret(name) {
+  el('secName').value = name;
+  el('secValue').focus();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  toast(`Editing value of "${name}" — paste the new key and Save`);
+}
+
+function loadMapping(role) {
+  el('mRole').value = role;
+  const e = entryOf(STATE.roleMap, role) || {};
+  el('mSecret').value = e.secret || '';
+  el('mInject').value = e.inject || '';
+  el('mBase').value = e.baseUrl || '';
+  el('mToken').value = e.tokenUrl || '';
+  el('mScope').value = e.scope || '';
+  el('mIdField').value = e.idField || '';
+  el('mSecretField').value = e.secretField || '';
+}
+
+async function saveSecret(btn) {
+  btn.disabled = true;
+  try {
+    const kind = document.querySelector('input[name=kind]:checked').value;
+    const payload = kind === 'pair'
+      ? { name: el('secName').value, kind, id: el('pairId').value, secretVal: el('pairSecret').value,
+          idField: el('pairIdField').value, secretField: el('pairSecretField').value }
+      : { name: el('secName').value, kind, value: el('secValue').value };
+    const r = await post('/api/secret', payload);
+    toast(`Saved "${r.name}" to Key Vault`);
+    el('secValue').value = ''; el('pairId').value = ''; el('pairSecret').value = '';
+    refresh();
+  } catch (e) { toast(e.message, false); }
+  btn.disabled = false;
+}
+
+async function saveMapping(btn) {
+  btn.disabled = true;
+  try {
+    await post('/api/mapping', { role: el('mRole').value, secret: el('mSecret').value,
+      inject: el('mInject').value, baseUrl: el('mBase').value, tokenUrl: el('mToken').value,
+      scope: el('mScope').value, idField: el('mIdField').value, secretField: el('mSecretField').value });
+    toast('Mapping saved — restart the broker to apply');
+    refresh();
+  } catch (e) { toast(e.message, false); }
+  btn.disabled = false;
+}
+
+async function unmap(btn, role) {
+  if (!confirm(`Remove the vendor mapping for ${role}?\nCallers with this role will get 403 until it is re-mapped.`)) return;
+  btn.disabled = true;
+  try {
+    await post('/api/mapping', { role, remove: true });
+    toast(`Unmapped ${role} — restart the broker to apply`);
+    refresh();
+  } catch (e) { toast(e.message, false); btn.disabled = false; }
+}
+
+async function probe(btn, role) {
+  btn.disabled = true;
+  try {
+    const r = await post('/api/probe', { role });
+    if (r.ok) toast(`Vendor reachable: ${r.url} → HTTP ${r.status} in ${r.ms}ms`);
+    else toast(`Vendor unreachable: ${r.url} — ${r.error}`, false);
+  } catch (e) { toast(e.message, false); }
+  btn.disabled = false;
+}
+
+async function restart(btn) {
+  if (!confirm('Restart the broker function app now?\nIn-flight requests may be dropped.')) return;
+  btn.disabled = true;
+  try {
+    await post('/api/restart');
+    toast('Restart issued — re-checking health in 20s');
+    setTimeout(() => refresh(true), 20000);
+  } catch (e) { toast(e.message, false); }
+  btn.disabled = false;
+}
+
+el('tHealth').addEventListener('click', () => refresh(true));
+el('envchip').addEventListener('click', () =>
+  copyText(STATE?.config.brokerUrl, 'Broker endpoint copied'));
+
+refresh();
+setInterval(refresh, 60000); // keep tiles live
+</script>
+</body>
+</html>

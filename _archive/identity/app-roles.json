@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "A3 authoritative role -> Key Vault named-value alias mapping. A2's named-value DISPLAY NAMES MUST set-equal the aliases here (G1b gate). A4's broker-policy.xml MUST select the named value by exact array membership on the role claim (G2 gate). A5 MUST assign the workload SP a DIRECT app-role assignment to one of these roles (no group nesting). Values are stable across all waves.",
+  "brokerClientIdPlaceholder": "00000000-0000-0000-0000-000000000000",
+  "appIdUriPlaceholder": "api://00000000-0000-0000-0000-000000000000",
+  "vendorBackendBaseUrl": "https://api.vendor.example.com",
+  "roleToAlias": {
+    "VendorApi.KeyA.Invoke": "vendor-key-a",
+    "VendorApi.KeyB.Invoke": "vendor-key-b",
+    "VendorApi.KeyC.Invoke": "vendor-key-c",
+    "VendorApi.Admin.Test": "vendor-key-canary"
+  },
+  "roles": [
+    {
+      "value": "VendorApi.KeyA.Invoke",
+      "displayName": "Vendor API Key A - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the Team A vendor key (named value vendor-key-a).",
+      "allowedMemberTypes": ["Application", "User"],
+      "namedValueAlias": "vendor-key-a",
+      "intendedCallers": "Team A users and Team A CI workload service principals"
+    },
+    {
+      "value": "VendorApi.KeyB.Invoke",
+      "displayName": "Vendor API Key B - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the Team B vendor key (named value vendor-key-b).",
+      "allowedMemberTypes": ["Application", "User"],
+      "namedValueAlias": "vendor-key-b",
+      "intendedCallers": "Team B users and Team B CI workload service principals"
+    },
+    {
+      "value": "VendorApi.KeyC.Invoke",
+      "displayName": "Vendor API Key C - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the production CI vendor key (named value vendor-key-c).",
+      "allowedMemberTypes": ["Application", "User"],
+      "namedValueAlias": "vendor-key-c",
+      "intendedCallers": "Production CI workload service principals"
+    },
+    {
+      "value": "VendorApi.Admin.Test",
+      "displayName": "Vendor API Admin Test - Invoke",
+      "description": "Admin-only canary/test access using a sandbox vendor key (named value vendor-key-canary).",
+      "allowedMemberTypes": ["User"],
+      "namedValueAlias": "vendor-key-canary",
+      "intendedCallers": "Broker administrators (manual smoke testing only)"
+    }
+  ],
+  "delegatedScope": {
+    "value": "VendorApi.Invoke",
+    "adminConsentDescription": "Allows the caller to invoke the vendor API through the broker; key selection is enforced server-side by the caller's app role.",
+    "userConsentDescription": "Invoke the vendor API through the broker (no vendor key exposure)."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$comment": "A3 outputs. brokerClientId is a PLACEHOLDER GUID to be substituted at deploy time with the real Broker API app registration client id. issuer MUST end with /v2.0 (v2 token endpoint) because the app manifest sets requestedAccessTokenVersion:2 and A4's broker code / Easy Auth audiences pin the v2 issuer+audience. appIdUri is the stable App ID URI form accepted alongside the GUID audience in Easy Auth. the function broker: Easy Auth validates the JWT at the platform before code runs; allowed audiences = client-id GUID AND api://<client-id>.",
+  "tenantId": "11111111-1111-1111-1111-111111111111",
+  "tenantIdPlaceholder": true,
+  "brokerClientId": "00000000-0000-0000-0000-000000000000",
+  "brokerClientIdPlaceholder": true,
+  "appIdUri": "api://00000000-0000-0000-0000-000000000000",
+  "appIdUriPlaceholder": true,
+  "issuer": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
+  "requestedAccessTokenVersion": 2,
+  "assignmentRequired": true,
+  "appRolesFile": "identity/app-roles.json"
+}

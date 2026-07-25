@@ -1,0 +1,10 @@
+{
+  "sub": "00000000-0000-0000-0000-000000000000",
+  "rg": "rg-broker-example",
+  "app": "func-broker-example",
+  "vault": "kv-broker-example",
+  "brokerUrl": "https://func-broker-example.azurewebsites.net/api/broker",
+  "appObjectId": "00000000-0000-0000-0000-000000000000",
+  "port": 8788,
+  "brandName": "API Key Broker"
+}

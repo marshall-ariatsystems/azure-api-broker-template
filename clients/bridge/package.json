@@ -1,0 +1,17 @@
+{
+  "name": "broker-bridge",
+  "version": "1.0.0",
+  "description": "Drop-in local proxy: existing apps use the key broker with a one-line base-URL change and no vendor credentials. Entra identity in, brokered vendor call out.",
+  "type": "module",
+  "main": "broker-bridge.mjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node broker-bridge.mjs",
+    "init": "node broker-bridge.mjs init",
+    "serve": "node broker-bridge.mjs serve",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.5.0"
+  }
+}

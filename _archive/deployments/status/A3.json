@@ -1,0 +1,14 @@
+{
+  "agent": "A3",
+  "status": "pass",
+  "outputs": [
+    "identity/app-registration.md",
+    "identity/app-roles.json",
+    "identity/grant-revoke-runbook.md",
+    "identity/outputs.json"
+  ],
+  "consumed": [],
+  "blockers": [],
+  "timestamp": "2026-07-20T08:19:24.166504+00:00",
+  "notes": "Broker app reg; requestedAccessTokenVersion:2; 4 app roles incl Application member type; assignment-required; direct SP assignment model. issuer ends /v2.0."
+}

@@ -1,0 +1,19 @@
+{
+  "$comment": "A1 outputs. PLACEHOLDER-filled; substitute at deploy time. hostname == broker.contoso.com (spec §7.1, resolved over the existing private VPN/on-prem ingress path — DNS NOT created by IaC). identityPrincipalId is emitted at deploy time by foundation.bicep and consumed by keyvault.bicep (A2) to bind Key Vault Secrets User scoped to only the vendor-key secrets.",
+  "functionName": "apibkr-optd-func",
+  "hostname": "broker.contoso.com",
+  "functionDefaultHostname": "apibkr-optd-func.azurewebsites.net",
+  "identityPrincipalId": "PLACEHOLDER_SYSTEM_ASSIGNED_MANAGED_IDENTITY_PRINCIP_ID",
+  "identityTenantId": "PLACEHOLDER_TENANT_ID",
+  "flexPlanName": "apibkr-optd-plan",
+  "appInsightsName": "apibkr-optd-ai",
+  "appInsightsConnectionString": "PLACEHOLDER_INSTRUMENTATION_CONNECTION_STRING",
+  "keyVaultName": "apibkr-optd-kv",
+  "keyVaultUri": "https://apibkr-optd-kv.vault.azure.net/",
+  "storageAccountName": "stoptdPLACEHOLDER",
+  "vnetIntegrationSubnetId": "PLACEHOLDER_EXISTING_VNET_SUBNET_ID",
+  "publicNetworkAccess": "Disabled",
+  "alwaysReadyInstanceCount": 1,
+  "alwaysReadyInstanceMemoryMiB": 2048,
+  "networkingPosture": "reuse-existing-vnet-access-restrictions-no-PE-no-DNS-resolver-default"
+}

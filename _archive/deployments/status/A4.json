@@ -1,0 +1,21 @@
+{
+  "agent": "A4",
+  "status": "pass",
+  "outputs": [
+    "function/src/AzureKeyBroker/",
+    "iac/auth.bicep"
+  ],
+  "consumed": [
+    {
+      "path": "identity/outputs.json",
+      "hash": "8ad5acdb36933f1524550b9e55ae39709b5908c8885d61613c1044d5db784f83"
+    },
+    {
+      "path": "identity/app-roles.json",
+      "hash": "f8b51fd959393f4839b461c122a094a85e32a23a8931633939d1be73093f81b1"
+    }
+  ],
+  "blockers": [],
+  "timestamp": "2026-07-20T08:19:24.166504+00:00",
+  "notes": ".NET 8 isolated worker broker: Easy Auth (auth.bicep); exact HashSet role select (count!=1 -> 403); KV fetch+cache; canonicalize+allowlist scrub; server-side inject; no caller-oid forward; Table rate limit; Event Grid cache-bust. dotnet build attempted (best-effort structural review if offline)."
+}

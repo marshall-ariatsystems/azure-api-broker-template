@@ -1,0 +1,9 @@
+{
+  "$comment": "Optional public route catalogue. It must not contain vendor secret names, authorization roles, injection modes, credentials, or provider-specific implementation details. The broker is authoritative for all authorization and vendor configuration.",
+  "vendors": {
+    "example": {
+      "publicBase": "https://api.example.com/v1",
+      "status": "example route metadata only; broker-side onboarding and authorization remain server-side"
+    }
+  }
+}

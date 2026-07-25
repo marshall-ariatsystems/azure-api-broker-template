@@ -1,0 +1,19 @@
+# Local Broker Bridge configuration is routing/identity metadata, never a vendor secret store.
+broker.env
+broker.env.*
+
+# Local application settings and generated outputs.
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+bin/
+obj/
+__pycache__/
+*.py[cod]
+
+# Local coordination files are intentionally not product documentation.
+AGENT.md
+conflicts.md

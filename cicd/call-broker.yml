@@ -1,0 +1,75 @@
+# cicd/call-broker.yml — GitHub Actions workflow that calls the broker with a v2 OIDC token.
+# spec §4.4 (GitHub OIDC), §12.1 (token-claim assertion), §15 step 5 (runtime tests).
+#
+# SMOKE BARS enforced by this workflow:
+#  - permissions: id-token: write (OIDC)
+#  - NO vendor key in any secrets.* reference
+#  - token acquired with --scope "<appIdUri>/.default" (v2; NOT --resource)
+#  - a token-claim assertion step (decode aud/iss/roles) BEFORE the broker call
+#  - broker called at https://broker.contoso.com with only Authorization: Bearer
+
+name: call-broker
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: 'Vendor API path to call through the broker'
+        required: true
+        default: 'v1/health'
+
+permissions:
+  id-token: write   # required for OIDC to Entra
+  contents: read
+
+env:
+  BROKER_HOST: broker.contoso.com
+  # PLACEHOLDER: substitute the real tenant id and broker App ID URI at deploy time.
+  TENANT_ID: '11111111-1111-1111-1111-111111111111'
+  APP_ID_URI: 'api://00000000-0000-0000-0000-000000000000'
+  AZURE_CLIENT_ID: '00000000-0000-0000-0000-000000000000'   # the workload SP the FIC trusts
+  AZURE_SUBSCRIPTION_ID: '00000000-0000-0000-0000-000000000000'
+
+jobs:
+  call-broker:
+    runs-on: [self-hosted, azure-vnet]   # spec §A5: primary path = self-hosted runner in the Azure VNet
+    environment: production             # matches the FIC subject repo:ORG/REPO:environment:production
+    steps:
+      - name: OIDC login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: false
+          audience: api://AzureADTokenExchange
+
+      - name: Acquire v2 broker token (--scope, NOT --resource)
+        id: token
+        run: |
+          set -euo pipefail
+          # v2 token (spec §4.2): --scope "<appIdUri>/.default" requests a v2 token.
+          # --resource would request a v1 token and be rejected by Easy Auth.
+          TOKEN=$(az account get-access-token --scope "${APP_ID_URI}/.default" --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Assert token claims (decode aud/iss/roles) BEFORE calling the broker
+        # spec §12.1 — the council's mandatory runtime test. azure/login only proves SP login,
+        # NOT app-role possession. This step fails the build on any mismatch.
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          bash test/token-claims-assert.sh   # asserts ver=2, aud, iss (v2), exactly one VendorApi.Key* role
+
+      - name: Call the broker (no vendor key anywhere)
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          PATH_ARG: ${{ github.event.inputs.path }}
+        run: |
+          set -euo pipefail
+          # Only Authorization: Bearer. NO vendor key, NO api-key header, NO secrets.* for keys.
+          curl -fsS -w '\nHTTP_STATUS:%{http_code}\n' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://${BROKER_HOST}/${PATH_ARG}"

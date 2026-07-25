@@ -1,0 +1,22 @@
+{
+  "agent": "A7",
+  "status": "pass",
+  "outputs": [
+    "test/test-plan.md",
+    "test/acceptance-matrix.md",
+    "test/rotation-runbook.md",
+    "test/rollout-plan.md",
+    "test/results.md",
+    "test/token-claims-assert.sh",
+    "test/run-smoke-bars.sh"
+  ],
+  "consumed": [
+    {
+      "path": "function/src/AzureKeyBroker/BrokerFunction.cs",
+      "hash": "5a33f2f231983884879a93f65656b94391e5a69c055426fc499cc0f1f467cd08"
+    }
+  ],
+  "blockers": [],
+  "timestamp": "2026-07-20T08:19:24.166504+00:00",
+  "notes": "Runtime test plan + acceptance matrix (all 19 spec \u00a712 rows PASS); rotation + break-glass + rollout runbooks; token-claims-assert.sh (\u00a712.1); smoke-bars runner."
+}

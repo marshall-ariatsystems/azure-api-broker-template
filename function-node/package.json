@@ -1,0 +1,13 @@
+{
+  "name": "broker-cxapi",
+  "version": "1.0.0",
+  "description": "Minimal Entra-fronted vendor key broker (Node 22, Flex Consumption).",
+  "main": "src/*.js",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@azure/data-tables": "^13.2.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "A3 authoritative role -> Key Vault SECRET NAME mapping. The broker Function reads the real vendor key directly from Key Vault (no APIM named values). A2's Key Vault secrets are named EXACTLY by these secretName values, and the Function MI is granted Key Vault Secrets User scoped to ONLY these secrets (G1b gate). A4's broker code selects the secret by EXACT array membership on the roles claim (G2 gate). A5 MUST assign the workload SP a DIRECT app-role assignment to one of these roles (no group nesting). Values are stable across all waves. Secret NAMES reveal purpose but never value (spec §6.1).",
+  "brokerClientIdPlaceholder": "00000000-0000-0000-0000-000000000000",
+  "appIdUriPlaceholder": "api://00000000-0000-0000-0000-000000000000",
+  "vendorBackendBaseUrl": "https://api.vendor.example.com",
+  "roleToSecretName": {
+    "VendorApi.KeyA.Invoke": "vendor-api-key-team-a",
+    "VendorApi.KeyB.Invoke": "vendor-api-key-team-b",
+    "VendorApi.KeyC.Invoke": "vendor-api-key-ci",
+    "VendorApi.Admin.Test": "vendor-api-key-canary"
+  },
+  "roles": [
+    {
+      "value": "VendorApi.KeyA.Invoke",
+      "displayName": "Vendor API Key A - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the Team A vendor key (Key Vault secret vendor-api-key-team-a).",
+      "allowedMemberTypes": ["Application", "User"],
+      "secretName": "vendor-api-key-team-a",
+      "intendedCallers": "Team A users and Team A CI workload service principals"
+    },
+    {
+      "value": "VendorApi.KeyB.Invoke",
+      "displayName": "Vendor API Key B - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the Team B vendor key (Key Vault secret vendor-api-key-team-b).",
+      "allowedMemberTypes": ["Application", "User"],
+      "secretName": "vendor-api-key-team-b",
+      "intendedCallers": "Team B users and Team B CI workload service principals"
+    },
+    {
+      "value": "VendorApi.KeyC.Invoke",
+      "displayName": "Vendor API Key C - Invoke",
+      "description": "Allows the caller to invoke the vendor API using the production CI vendor key (Key Vault secret vendor-api-key-ci).",
+      "allowedMemberTypes": ["Application", "User"],
+      "secretName": "vendor-api-key-ci",
+      "intendedCallers": "Production CI workload service principals"
+    },
+    {
+      "value": "VendorApi.Admin.Test",
+      "displayName": "Vendor API Admin Test - Invoke",
+      "description": "Admin-only canary/test access using a sandbox vendor key (Key Vault secret vendor-api-key-canary).",
+      "allowedMemberTypes": ["User"],
+      "secretName": "vendor-api-key-canary",
+      "intendedCallers": "Broker administrators (manual smoke testing only)"
+    }
+  ],
+  "delegatedScope": {
+    "value": "VendorApi.Invoke",
+    "adminConsentDescription": "Allows the caller to invoke the vendor API through the broker; key selection is enforced server-side by the caller's app role.",
+    "userConsentDescription": "Invoke the vendor API through the broker (no vendor key exposure)."
+  }
+}

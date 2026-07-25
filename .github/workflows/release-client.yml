@@ -1,0 +1,144 @@
+name: release broker client
+
+on:
+  push:
+    tags:
+      - 'client-v*'
+  workflow_dispatch:
+
+# Build jobs only need source read access. Release publication and provenance permissions are
+# granted to the release job below, after all platform builds have passed.
+permissions:
+  contents: read
+
+env:
+  PROJECT: clients/dotnet/NinjaBrokerClient.csproj
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build:
+    name: build ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            executable: broker-client
+            archive: broker-client-linux-x64.tar.gz
+          - os: macos-latest
+            rid: osx-arm64
+            executable: broker-client
+            archive: broker-client-osx-arm64.tar.gz
+          - os: windows-latest
+            rid: win-x64
+            executable: broker-client.exe
+            archive: broker-client-win-x64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish self-contained single-file client
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish "$PROJECT" --configuration Release --runtime "${{ matrix.rid }}" \
+            --self-contained true --output "bin/${{ matrix.rid }}" \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=None \
+            -p:DebugSymbols=false
+
+      - name: Smoke test command startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          "bin/${{ matrix.rid }}/${{ matrix.executable }}" >/tmp/broker-client-output 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 2
+          grep -F 'usage: dotnet run -- <path>' /tmp/broker-client-output
+
+      # To sign Windows artifacts, configure these repository secrets with a base64 PFX and its
+      # password. Signing remains deliberately optional so forks can still build release candidates.
+      - name: Sign Windows executable when certificate secrets are configured
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_PASSWORD)) {
+            Write-Host 'Windows signing secrets are not configured; leaving release candidate unsigned.'
+            exit 0
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'broker-client-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE))
+          try {
+            signtool sign /fd SHA256 /f $certificatePath /p $env:WINDOWS_SIGNING_PASSWORD "bin/${{ matrix.rid }}/${{ matrix.executable }}"
+          } finally {
+            Remove-Item -Force $certificatePath -ErrorAction SilentlyContinue
+          }
+
+      - name: Create distribution archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "${{ runner.os }}" = 'Windows' ]; then
+            (
+              cd "bin/${{ matrix.rid }}"
+              7z a -tzip "$GITHUB_WORKSPACE/dist/${{ matrix.archive }}" "${{ matrix.executable }}"
+            )
+          else
+            tar -C "bin/${{ matrix.rid }}" -czf "dist/${{ matrix.archive }}" "${{ matrix.executable }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: attest and publish
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and dependency SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum broker-client-* > SHA256SUMS)
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            -v "$GITHUB_WORKSPACE/dist:/out" \
+            anchore/syft:v1.20.0 dir:/src/clients/dotnet -o cyclonedx-json=/out/broker-client.cdx.json
+
+      - name: Generate build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/broker-client-*'
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --generate-notes --title "Broker client $TAG"

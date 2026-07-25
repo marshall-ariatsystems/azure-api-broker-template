@@ -1,0 +1,16 @@
+{
+  "name": "broker-admin-ui",
+  "version": "1.0.0",
+  "description": "Local click-and-type admin UI for the Azure API key broker: input vendor keys into Key Vault, edit role->vendor mappings, restart/health-check the broker. Uses the operator's own Azure identity (az login); binds to localhost only; stores nothing.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@azure/arm-appservice": "^15.0.0",
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0"
+  }
+}
