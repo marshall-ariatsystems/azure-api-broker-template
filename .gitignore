@@ -31,3 +31,6 @@ nohup.out
 
 # Historical material, kept locally only.
 _archive/
+
+# park: local "where we left off" notes (not committed)
+.park/
