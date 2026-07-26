@@ -18,7 +18,7 @@ const rateLimiter = require('./rate-limiter');
 
 const KEYVAULT_URI = process.env.KEYVAULT_URI;
 const VENDOR_BASE_URL = (process.env.VENDOR_BASE_URL || '').replace(/\/+$/, '');
-// header | bearer: secret value is a single opaque key.
+// header | bearer: secret value is a single opaque key; entra: Function workload identity token.
 // pair | basic: secret value is a JSON blob {"keyId":"…","secret":"…"} stored as ONE Key Vault
 // secret so the two halves rotate atomically (never a new keyId with a stale secret).
 const INJECT_MODE = (process.env.INJECT_MODE || 'header').toLowerCase();
@@ -48,6 +48,7 @@ function loadRoleMap() {
 }
 const ROLE_TO_SECRET = Object.freeze(loadRoleMap());
 // Normalize a map entry to { secret, baseUrl, inject } with global fallbacks.
+// `entra` is intentionally secretless: the Function workload identity mints the token.
 function vendorForRole(role) {
   const entry = ROLE_TO_SECRET[role];
   if (typeof entry === 'string') return { secret: entry, baseUrl: VENDOR_BASE_URL, inject: INJECT_MODE };
@@ -237,7 +238,7 @@ app.http('broker', {
     }
     const vendor = vendorForRole(selectedRole);
     const secretName = vendor.secret;
-    if (!secretName) {
+    if (!secretName && vendor.inject !== 'entra') {
       ctx.error(`ROLE_SECRET_MAP entry for ${selectedRole} has no secret name`);
       return { status: 500, jsonBody: { error: 'vendor key mapping misconfigured' } };
     }
@@ -251,7 +252,7 @@ app.http('broker', {
     //    per inbound request until the cache warms, burning KV throttling budget (and cost) on
     //    traffic that is about to be rejected anyway. Quota is the cheapest possible gate, so it
     //    runs first.
-    const quotaResult = await rateLimiter.quotaCheck(oid, secretName, ctx);
+    const quotaResult = await rateLimiter.quotaCheck(oid, secretName || selectedRole, ctx);
     if (!quotaResult.ok) {
       return {
         status: 429,
@@ -262,11 +263,13 @@ app.http('broker', {
 
     // 3. Fetch the real key from Key Vault (managed identity).
     let vendorKey;
-    try {
-      vendorKey = await getSecret(secretName);
-    } catch (e) {
-      ctx.error(`key vault fetch failed for ${secretName}: ${e.message}`);
-      return { status: 502, jsonBody: { error: 'vendor key unavailable' } };
+    if (vendor.inject !== 'entra') {
+      try {
+        vendorKey = await getSecret(secretName);
+      } catch (e) {
+        ctx.error(`key vault fetch failed for ${secretName}: ${e.message}`);
+        return { status: 502, jsonBody: { error: 'vendor key unavailable' } };
+      }
     }
 
     // 4. Validate caller input (spec §6.3: fail-closed for credential-shaped fields).
@@ -316,7 +319,20 @@ app.http('broker', {
     // 5. Build the vendor URL: vendor.baseUrl + caller subpath (vendor slug already stripped) + query.
     const url = vendor.baseUrl + (subpath ? '/' + subpath : '') + (qs ? '?' + qs : '');
     let pair = null;
-    if (vendor.inject === 'pair' || vendor.inject === 'basic' || vendor.inject === 'oauth2cc') {
+    if (vendor.inject === 'entra') {
+      if (!vendor.scope) {
+        ctx.error(`role ${selectedRole} uses entra injection but has no scope in ROLE_SECRET_MAP`);
+        return { status: 500, jsonBody: { error: 'vendor Entra scope not configured' } };
+      }
+      try {
+        const token = await credential.getToken(vendor.scope);
+        if (!token?.token) throw new Error('credential returned no token');
+        outHeaders.authorization = `Bearer ${token.token}`;
+      } catch (e) {
+        ctx.error(`managed identity token acquisition failed for role ${selectedRole}: ${e.message}`);
+        return { status: 502, jsonBody: { error: 'vendor managed identity token unavailable' } };
+      }
+    } else if (vendor.inject === 'pair' || vendor.inject === 'basic' || vendor.inject === 'oauth2cc') {
       pair = parsePairSecret(vendorKey, vendor);
       if (!pair) {
         ctx.error(`secret ${secretName} is not a valid JSON pair (inject=${vendor.inject})`);
@@ -398,7 +414,7 @@ app.http('broker', {
 
     // Backend audit line — shows auth + role + injection + vendor status. NEVER logs the key/token.
     const elapsed = Date.now() - startedAt;
-    ctx.log(`[broker] ALLOW oid=${oid} azp=${azp} role=${selectedRole} -> secret=${secretName} ` +
+    ctx.log(`[broker] ALLOW oid=${oid} azp=${azp} role=${selectedRole} -> credential=${secretName || 'managed-identity'} ` +
             `inject=${vendor.inject} vendor=${subpath || '/'} status=${vresp.status} ${elapsed}ms`);
 
     // Demo-only: surface what the broker did (redacted — names/status only, never the key value),
@@ -406,7 +422,7 @@ app.http('broker', {
     if (DEMO_MODE) {
       respHeaders['x-broker-caller-oid'] = oid || 'unknown';
       respHeaders['x-broker-role'] = selectedRole;
-      respHeaders['x-broker-secret-name'] = secretName;
+      respHeaders['x-broker-secret-name'] = secretName || 'managed-identity';
       respHeaders['x-broker-inject-mode'] = vendor.inject;
       respHeaders['x-broker-vendor-status'] = String(vresp.status);
       respHeaders['x-broker-key-present-on-client'] = 'false';

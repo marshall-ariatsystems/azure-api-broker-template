@@ -15,6 +15,7 @@
 #   oauth2cc          client-credentials: the broker mints AND caches the Bearer itself, so the
 #                     consuming app is fully keyless and implements no OAuth. Same pair as above,
 #                     plus TOKEN_URL (required) and SCOPE (optional). This is the HCSS-style flow.
+#   entra             secretless workload identity: the Function mints the vendor token itself.
 #
 # Fill the env vars below, then:   ./onboard-vendor.sh --dry-run    (prints every az command)
 #                          then:   ./onboard-vendor.sh              (executes)
@@ -31,7 +32,7 @@ set -euo pipefail
 
 # ---- required: the vendor ------------------------------------------------------------------------
 : "${VENDOR_NAME:?e.g. HCSS}"                    # PascalCase; drives role + slug + default secret name
-: "${INJECT:?header|bearer|pair|basic|oauth2cc}"
+: "${INJECT:?header|bearer|pair|basic|oauth2cc|entra}"
 : "${BASE_URL:?vendor API base URL, e.g. https://api.vendor.com/v1}"
 
 # ---- derived / optional --------------------------------------------------------------------------
@@ -49,8 +50,9 @@ DRY=0; [[ "${1:-}" == "--dry-run" ]] && DRY=1
 say(){ printf '\n=== %s ===\n' "$*"; }
 run(){ if [[ $DRY -eq 1 ]]; then printf '  + %s\n' "$*"; else eval "$*"; fi; }   # NEVER pass secrets here
 command -v jq >/dev/null || { echo "jq is required"; exit 3; }
-[[ "$INJECT" =~ ^(header|bearer|pair|basic|oauth2cc)$ ]] || { echo "bad INJECT=$INJECT"; exit 2; }
+[[ "$INJECT" =~ ^(header|bearer|pair|basic|oauth2cc|entra)$ ]] || { echo "bad INJECT=$INJECT"; exit 2; }
 [[ "$INJECT" == "oauth2cc" && -z "$TOKEN_URL" ]] && { echo "oauth2cc requires TOKEN_URL"; exit 2; }
+[[ "$INJECT" == "entra" && -z "$SCOPE" ]] && { echo "entra requires SCOPE"; exit 2; }
 AZ="az --subscription $SUBSCRIPTION"
 
 # ---- build the secret value (from env; never printed) --------------------------------------------
@@ -63,11 +65,15 @@ case "$INJECT" in
     idf="${IDFIELD:-client_id}"; secf="${SECRETFIELD:-client_secret}"
     SECRET_VALUE="$(jq -nc --arg a "$VENDOR_CLIENT_ID" --arg b "$VENDOR_CLIENT_SECRET" \
                           --arg idf "$idf" --arg secf "$secf" '{($idf):$a,($secf):$b}')" ;;
+  entra)
+    SECRET_VALUE='' ;;
 esac
 
 # ---- 1. Key Vault secret (value redacted; env-sourced) -------------------------------------------
 say "1. Key Vault secret '$SECRET_NAME'"
-if [[ $DRY -eq 1 ]]; then
+if [[ "$INJECT" == "entra" ]]; then
+  echo "  skipped — workload identity token, no vendor secret."
+elif [[ $DRY -eq 1 ]]; then
   echo "  + $AZ keyvault secret set --vault-name $KV_NAME --name $SECRET_NAME --value <redacted>"
 else
   $AZ keyvault secret set --vault-name "$KV_NAME" --name "$SECRET_NAME" --value "$SECRET_VALUE" >/dev/null
@@ -76,7 +82,9 @@ fi
 
 # ---- 2. least-privilege read for the Function MI, scoped to THIS secret --------------------------
 say "2. grant Function MI 'Key Vault Secrets User' on secret '$SECRET_NAME'"
-if [[ $DRY -eq 1 ]]; then
+if [[ "$INJECT" == "entra" ]]; then
+  echo "  skipped — no Key Vault secret to read."
+elif [[ $DRY -eq 1 ]]; then
   echo "  + SECRET_ID=\$($AZ keyvault secret show --vault-name $KV_NAME --name $SECRET_NAME --query id -o tsv)"
   echo "  + $AZ role assignment create --role 'Key Vault Secrets User' --assignee-object-id $FUNC_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --scope \$SECRET_ID"
 else
@@ -93,8 +101,10 @@ ROLES="$($AZ ad app show --id "$BROKER_CLIENT_ID" --query appRoles -o json 2>/de
 if jq -e --arg r "$ROLE_VALUE" 'any(.[]?; .value==$r)' >/dev/null <<<"$ROLES"; then
   echo "  role already present — skipping."
 else
+  ROLE_DESCRIPTION="Invoke $VENDOR_NAME through the broker."
+  [[ "$INJECT" != "entra" ]] && ROLE_DESCRIPTION="Invoke $VENDOR_NAME through the broker (Key Vault secret $SECRET_NAME)."
   NEWROLES="$(jq -c --arg r "$ROLE_VALUE" --arg n "$VENDOR_NAME - Invoke" \
-    --arg d "Invoke $VENDOR_NAME through the broker (Key Vault secret $SECRET_NAME)." \
+    --arg d "$ROLE_DESCRIPTION" \
     --arg id "$(uuidgen)" \
     '. + [{allowedMemberTypes:["Application","User"],description:$d,displayName:$n,id:$id,isEnabled:true,value:$r}]' \
     <<<"$ROLES")"
@@ -106,7 +116,8 @@ fi
 say "4. ROLE_SECRET_MAP entry for '$ROLE_VALUE'"
 ENTRY="$(jq -nc --arg secret "$SECRET_NAME" --arg base "$BASE_URL" --arg inject "$INJECT" \
   --arg tokenUrl "$TOKEN_URL" --arg scope "$SCOPE" --arg idf "$IDFIELD" --arg secf "$SECRETFIELD" '
-  {secret:$secret, baseUrl:$base, inject:$inject}
+  {baseUrl:$base, inject:$inject}
+  + (if $inject!="entra" then {secret:$secret} else {} end)
   + (if $tokenUrl!="" then {tokenUrl:$tokenUrl} else {} end)
   + (if $scope!=""    then {scope:$scope}       else {} end)
   + (if $idf!=""      then {idField:$idf}        else {} end)

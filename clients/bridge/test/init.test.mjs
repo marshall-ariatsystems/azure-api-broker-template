@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -98,9 +98,22 @@ test('environment overrides broker.env but loopback binding remains mandatory', 
 
 test('serve reports a missing Azure Identity install without a module stack trace', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'broker-bridge-config-'));
+  const bridgeDir = join(cwd, 'clients', 'bridge');
+  const adaptersDir = join(cwd, 'broker-adapters');
+  const bridgeSource = new URL('../', import.meta.url);
+  await mkdir(bridgeDir, { recursive: true });
+  await mkdir(adaptersDir, { recursive: true });
+  await Promise.all([
+    'broker-bridge.mjs',
+    'cli.mjs',
+    'version.mjs',
+    'request-policy.mjs',
+    'routing.mjs',
+    'launcher.mjs',
+  ].map((file) => copyFile(new URL(file, bridgeSource), join(bridgeDir, file))));
+  await copyFile(new URL('../../broker-adapters/presets.mjs', bridgeSource), join(adaptersDir, 'presets.mjs'));
   await writeFile(join(cwd, 'broker.env'), 'BROKER_BASE=https://broker.example\nBROKER_SCOPE=api://example/.default\n');
-  const bridge = new URL('../broker-bridge.mjs', import.meta.url).pathname;
-  const result = await runNode([bridge, 'serve'], cwd);
+  const result = await runNode([join(bridgeDir, 'broker-bridge.mjs'), 'serve'], cwd);
   assert.equal(result.code, 2);
   // Some restricted test runners close a child stderr pipe before its final diagnostic flushes.
   // The exit status is the stable CLI contract; when output is captured, verify the remediation too.

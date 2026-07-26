@@ -457,7 +457,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   properties: {
     // --- Vendor API gateway configuration (spec §6.2, §9) ---
     VENDOR_BASE_URL: 'https://api.vendor.example.com' // Replaced at deploy time with real vendor URL
-    INJECT_MODE: 'header' // 'header' | 'bearer' | 'pair' | 'basic' | 'oauth2cc' (spec §6.2, §9)
+    INJECT_MODE: 'header' // 'header' | 'bearer' | 'pair' | 'basic' | 'oauth2cc' | 'entra' (spec §6.2, §9)
     VENDOR_KEY_HEADER_NAME: 'x-api-key' // Header name for the vendor key injection (default: x-api-key)
     VENDOR_KEYID_HEADER_NAME: 'x-api-key-id' // Header name for keyId in pair/basic/oauth2cc modes
     VENDOR_SECRET_HEADER_NAME: 'x-api-secret' // Header name for secret in pair/basic/oauth2cc modes

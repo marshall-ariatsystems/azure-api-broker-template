@@ -172,6 +172,30 @@ Point the app at `http://127.0.0.1:8079/openai/v1` and set its normal API-key va
 forwards only to the configured broker. `broker.env` contains routing and identity metadata only;
 it is not a vendor-secret store.
 
+Or launch the app *through* the bridge in one step — the bridge starts, waits for its own health,
+injects the preset environment (base URL + `broker-managed` placeholder), runs the app, and shuts
+down cleanly with the app's exit code:
+
+```bash
+npm run run -- --preset openai -- node my-app.mjs
+```
+
+### Standalone executable
+
+The bridge also ships as a single-file executable, so target machines need no Node or npm:
+
+```bash
+npm run bundle    # esbuild single-file CJS bundle (dist/broker-bridge.cjs)
+npm run package   # Node SEA binary for this platform (dist/broker-bridge)
+./dist/broker-bridge --version
+```
+
+Packaging requires an official Node build as the host binary (shared-`libnode` builds cannot host a
+SEA blob); the script verifies this and honors a `NODE_SEA_BINARY` override. Tagged releases
+(`bridge-v*`) build Linux x64, macOS arm64, and Windows x64 binaries via
+`.github/workflows/release-bridge.yml`, with SHA-256 checksums, a CycloneDX SBOM, GitHub build
+provenance, and optional Windows Authenticode signing.
+
 The generated profile uses `BROKER_ROUTING_MODE=strict`. Keep it there for the normal one-role
 deployment. Set `BROKER_ROUTING_MODE=named` only after the broker owner has deliberately enabled
 `MULTI_ROLE_VENDOR_ROUTING=true` for a multi-vendor identity.
@@ -294,8 +318,8 @@ Operating it safely:
 ## Contributing
 
 Bug reports, vendor injection modes, and client ports are welcome. Fix bugs **here** in the template,
-not in your instance repo. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, the
-Node/.NET parity requirement, and the pre-commit checklist.
+not in your instance repo. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the
+pre-commit checklist.
 
 ## License
 

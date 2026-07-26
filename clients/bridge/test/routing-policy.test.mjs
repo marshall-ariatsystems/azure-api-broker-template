@@ -22,3 +22,16 @@ test('request policy strips supplied credential and platform headers but preserv
   assert.equal(isBlockedRequestHeader('x-ms-foo'), true);
   assert.equal(isBlockedRequestHeader('x-correlation-id'), false);
 });
+
+test('request policy drops adversarial credential casing while preserving safe headers', () => {
+  const cases = [
+    'X-Api-Key', 'X-API-KEY', 'Api-Key', 'APIKEY', 'Authorization', 'AUTHORIZATION', 'Access_Token', 'Subscription-Key',
+  ];
+
+  for (const name of cases) {
+    const headers = brokerRequestHeaders({ [name]: 'caller-credential', 'content-type': 'application/json', 'idempotency-key': 'preserved' }, 'broker-token');
+    assert.equal(Object.hasOwn(headers, name), false, name);
+    assert.equal(headers['content-type'], 'application/json');
+    assert.equal(headers['idempotency-key'], 'preserved');
+  }
+});

@@ -17,3 +17,17 @@ __pycache__/
 # Local coordination files are intentionally not product documentation.
 AGENT.md
 conflicts.md
+
+# Directive-framework runtime state (local, never product docs)
+_directives/
+
+# Local agent/tool state — never product content.
+.claude/
+.codex/
+.agents/
+CLAUDE.md
+*.log
+nohup.out
+
+# Historical material, kept locally only.
+_archive/

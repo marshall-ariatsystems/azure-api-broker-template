@@ -1,1 +1,0 @@
-../kickoff.d/azure-api-key-broker-spec.md

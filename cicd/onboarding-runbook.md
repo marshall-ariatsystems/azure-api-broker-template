@@ -3,9 +3,11 @@
 > Add a vendor to a broker instance in one command. Spec owners: §4.3 (app roles), §5.1 (role→secret
 > map), §6.1 (least-privilege KV RBAC). Driver: [`cicd/onboard-vendor.sh`](./onboard-vendor.sh).
 
-`onboard-vendor.sh` does all five steps idempotently: KV secret → MI read-grant (scoped to the one
-secret) → Entra app role → `ROLE_SECRET_MAP` merge → optional role assignment. Run it once per vendor
-when standing a client instance up from this template.
+For secret-backed vendors, `onboard-vendor.sh` does all five steps idempotently: KV secret → MI
+read-grant (scoped to the one secret) → Entra app role → `ROLE_SECRET_MAP` merge → optional role
+assignment. The `entra` mode deliberately skips the first two steps because the Function workload
+identity mints the vendor token itself. Run it once per vendor when standing a client instance up
+from this template.
 
 ## 1. Fill the broker-instance values (once per instance)
 
@@ -44,6 +46,19 @@ export VENDOR_CLIENT_ID=…   VENDOR_CLIENT_SECRET=…       # from the ENV, nev
 
 > Confirm the vendor's token endpoint returns **`expires_in`** so the broker caches at the real TTL
 > (it falls back to 300s otherwise). Refresh is expiry-based; early-invalidation retry is FR-3.
+
+### `entra`: fully keyless Azure workload identity (Microsoft Graph)
+
+`entra` creates no Key Vault vendor secret. The Function's managed identity acquires a token for
+`SCOPE` and the broker injects it as `Authorization: Bearer`. Grant the required Microsoft Graph
+application permissions and tenant admin consent to the **Function managed identity** before use.
+
+```bash
+export VENDOR_NAME=Graph INJECT=entra BASE_URL=https://graph.microsoft.com/v1.0
+export SCOPE=https://graph.microsoft.com/.default
+./cicd/onboard-vendor.sh --dry-run
+./cicd/onboard-vendor.sh
+```
 
 ### `header` / `bearer`: a single static key
 

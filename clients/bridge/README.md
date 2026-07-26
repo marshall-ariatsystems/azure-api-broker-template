@@ -32,6 +32,13 @@ Broker Bridge block to an existing `.env`.
 
 Replace the placeholders in `broker.env` with values from the instance outputs.
 
+## Deployment paths
+
+**Local developer.** Run `az login`; `DefaultAzureCredential` uses that signed-in developer identity.
+
+**Container sidecar / workload.** Use managed identity where available. It is the production default;
+see [`BAKE-IN.md`](./BAKE-IN.md) for the zero-touch integration path.
+
 ## 2. Run the bridge
 
 ```bash
@@ -44,6 +51,24 @@ curl -s http://127.0.0.1:8079/_bridge/health
 `BROKER_BASE` and `BROKER_SCOPE` in the shell override `broker.env`, which is useful for CI and
 managed-identity deployments. The bridge refuses to bind outside loopback, even if `BRIDGE_HOST` is
 set in the file or environment.
+
+To launch an existing app and stop the bridge automatically when it exits, use `run` instead:
+
+```bash
+npm run run -- --preset openai -- node app.mjs
+```
+
+`run` waits for `/_bridge/health`, supplies the preset's local URL and `broker-managed` placeholder
+to the child, returns the child's exit code, then stops the loopback listener. Use `--set` for a
+non-standard environment-variable name; values are limited to the local bridge URL or the harmless
+placeholder:
+
+```bash
+npm run run -- --preset openai \
+  --set MY_VENDOR_URL=http://127.0.0.1:8079/openai/v1 \
+  --set MY_VENDOR_KEY=broker-managed \
+  -- node app.mjs
+```
 
 ## 3. Change an app (the whole change)
 

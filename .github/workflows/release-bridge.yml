@@ -1,0 +1,152 @@
+name: release broker bridge
+
+on:
+  push:
+    tags:
+      - 'bridge-v*'
+  workflow_dispatch:
+
+# Build jobs only need source read access. Release publication and provenance permissions are
+# granted to the release job below, after all platform builds have passed.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            executable: broker-bridge
+          - os: macos-latest
+            rid: osx-arm64
+            executable: broker-bridge
+          - os: windows-latest
+            rid: win-x64
+            executable: broker-bridge.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/bridge/package-lock.json
+
+      - name: Guard bridge version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version=$(node -p "require('./clients/bridge/package.json').version")
+          bridge_version=$(grep -E "BRIDGE_VERSION" clients/bridge/version.mjs | head -n 1 | sed -E "s/.*['\"]([^'\"]+)['\"].*/\1/")
+          tag_version='(not a push)'
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            tag_version="${GITHUB_REF_NAME#bridge-v}"
+          fi
+          printf 'tag version: %s\npackage version: %s\nBRIDGE_VERSION: %s\n' "$tag_version" "$package_version" "$bridge_version"
+          if [ "$GITHUB_EVENT_NAME" = 'push' ] && [ "$tag_version" != "$package_version" ]; then
+            exit 1
+          fi
+          test "$package_version" = "$bridge_version"
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: clients/bridge
+        run: npm ci
+
+      - name: Run tests
+        shell: bash
+        working-directory: clients/bridge
+        run: npm test
+
+      - name: Bundle bridge
+        shell: bash
+        working-directory: clients/bridge
+        run: npm run bundle
+
+      - name: Package bridge
+        shell: bash
+        working-directory: clients/bridge
+        run: npm run package
+
+      - name: Smoke test packaged bridge
+        shell: bash
+        working-directory: clients/bridge
+        run: node --test test/packaged.test.mjs
+
+      # To sign Windows artifacts, configure these repository secrets with a base64 PFX and its
+      # password. Signing remains deliberately optional so forks can still build release candidates.
+      - name: Sign Windows executable when certificate secrets are configured
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$WINDOWS_SIGNING_CERTIFICATE" ] || [ -z "$WINDOWS_SIGNING_PASSWORD" ]; then
+            echo 'Windows signing secrets are not configured; leaving release candidate unsigned.'
+            exit 0
+          fi
+          certificatePath="$RUNNER_TEMP/broker-bridge-signing.pfx"
+          printf '%s' "$WINDOWS_SIGNING_CERTIFICATE" | base64 --decode > "$certificatePath"
+          trap 'rm -f "$certificatePath"' EXIT
+          signtool.exe sign /fd SHA256 /f "$certificatePath" /p "$WINDOWS_SIGNING_PASSWORD" 'clients/bridge/dist/broker-bridge.exe'
+
+      - name: Rename distribution binary
+        shell: bash
+        working-directory: clients/bridge
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          extension=''
+          if [ "${{ runner.os }}" = 'Windows' ]; then
+            extension='.exe'
+          fi
+          mv "dist/broker-bridge${extension}" "dist/broker-bridge-${version}-${{ matrix.rid }}${extension}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: broker-bridge-${{ matrix.rid }}
+          path: clients/bridge/dist/broker-bridge-*-${{ matrix.rid }}*
+          if-no-files-found: error
+
+  release:
+    name: attest and publish
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and dependency SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum broker-bridge-* > SHA256SUMS)
+          (cd clients/bridge && npm ci --omit dev --ignore-scripts >/dev/null)
+          (cd clients/bridge && npm sbom --sbom-format cyclonedx --omit dev) > dist/broker-bridge.cdx.json
+
+      - name: Generate build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/broker-bridge-*'
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --generate-notes --title "Broker bridge $TAG"

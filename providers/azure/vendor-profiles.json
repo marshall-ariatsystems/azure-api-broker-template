@@ -1,0 +1,48 @@
+{
+  "$comment": "Non-secret reference profiles for supported broker targets. Credentials, client secrets, tokens, and tenant-specific URLs are intentionally absent.",
+  "profiles": {
+    "microsoft-graph": {
+      "route": "graph",
+      "baseUrl": "https://graph.microsoft.com/v1.0",
+      "auth": { "mode": "entra-workload", "scope": "https://graph.microsoft.com/.default" },
+      "secretContract": "none",
+      "status": "supported by broker entra injection; requires Graph application permissions and tenant consent"
+    },
+    "ninjaone": {
+      "route": "ninjaone",
+      "baseUrl": "tenant-api-url",
+      "auth": { "mode": "oauth2cc", "tokenUrl": "tenant-oauth-token-url", "scope": "tenant-api-scope" },
+      "secretContract": "client-id-and-client-secret",
+      "status": "tenant region and OAuth values supplied during onboarding"
+    },
+    "it-glue": {
+      "route": "itglue",
+      "baseUrl": "https://api.itglue.com",
+      "regionalBaseUrls": ["https://api.eu.itglue.com", "https://api.au.itglue.com"],
+      "auth": { "mode": "header", "header": "x-api-key" },
+      "secretContract": "api-key",
+      "status": "supported by existing header injection"
+    },
+    "meraki": {
+      "route": "meraki",
+      "baseUrl": "https://api.meraki.com/api/v1",
+      "auth": { "mode": "bearer" },
+      "secretContract": "dashboard-api-key-or-oauth-token",
+      "status": "supported for broker-held bearer API keys; OAuth requires a token-provider extension"
+    },
+    "datto-rmm": {
+      "route": "datto-rmm",
+      "baseUrl": "tenant-api-url",
+      "auth": { "mode": "oauth-authorization-code", "tokenLifetimeHours": 100 },
+      "secretContract": "api-key-and-api-secret",
+      "status": "requires authorization-code and refresh-token broker support"
+    },
+    "cipp": {
+      "route": "cipp",
+      "baseUrl": "tenant-cipp-url",
+      "auth": { "mode": "oauth2cc", "authority": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token", "scope": "api-client-scope" },
+      "secretContract": "client-id-and-client-secret",
+      "status": "supported by existing oauth2cc injection after tenant onboarding"
+    }
+  }
+}
