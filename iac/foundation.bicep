@@ -65,6 +65,13 @@ param brokerHostname string = 'broker.contoso.com'
 @description('Disable public network access (inbound). spec §7.1: public access disabled; inbound restricted to your on-prem/VPN ingress CIDR.')
 param publicNetworkAccess string = 'Disabled'
 
+@allowed(['entra', 'generic-oidc'])
+param authMode string = 'entra'
+param genericOidcIssuer string = ''
+param genericOidcAudience string = ''
+param genericOidcClaimMapJson string = '{}'
+param genericOidcAssuranceJson string = '{}'
+
 // ----------------------------------------------------------------------------
 // Naming convention
 // ----------------------------------------------------------------------------
@@ -455,6 +462,11 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
   properties: {
+    AUTH_MODE: authMode
+    GENERIC_OIDC_ISSUER: genericOidcIssuer
+    GENERIC_OIDC_AUDIENCE: genericOidcAudience
+    GENERIC_OIDC_CLAIM_MAP: genericOidcClaimMapJson
+    GENERIC_OIDC_ASSURANCE: genericOidcAssuranceJson
     // --- Vendor API gateway configuration (spec §6.2, §9) ---
     VENDOR_BASE_URL: 'https://api.vendor.example.com' // Replaced at deploy time with real vendor URL
     INJECT_MODE: 'header' // 'header' | 'bearer' | 'pair' | 'basic' | 'oauth2cc' | 'entra' (spec §6.2, §9)

@@ -31,6 +31,13 @@ param brokerAppIdUri string = 'api://00000000-0000-0000-0000-000000000000'
 @description('Unauthenticated paths that bypass Easy Auth (e.g., /api/health for availability probes). CAUTION: exposes an endpoint; disabled by default. Set to specific paths only if required.')
 param excludedAuthPaths array = []
 
+@allowed(['entra', 'generic-oidc'])
+param authMode string = 'entra'
+param genericOidcIssuer string = ''
+param genericOidcAudience string = ''
+param genericOidcClaimMapJson string = '{}'
+param genericOidcAssuranceJson string = '{}'
+
 resource functionApp 'Microsoft.Web/sites@2024-04-01' existing = {
   name: functionName
 }
@@ -54,9 +61,9 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'authsettingsV2'
   properties: {
-    platform: { enabled: true } // Enable the Easy Auth platform (spec §4.1)
+    platform: { enabled: authMode == 'entra' }
     globalValidation: {
-      requireAuthentication: true // MANDATORY: reject unauthenticated requests at the platform (spec §4.1, security hardening)
+      requireAuthentication: authMode == 'entra'
       unauthenticatedClientAction: 'Return401' // Respond with HTTP 401 (not a login redirect; this is a broker, not an interactive app)
       excludedPaths: excludedAuthPaths // Paths exempt from auth (e.g., ['/api/health'] if availability monitoring requires it; default empty = all paths require auth)
     }
@@ -66,7 +73,7 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
     }
     identityProviders: {
       azureActiveDirectory: {
-        enabled: true
+        enabled: authMode == 'entra'
         registration: {
           openIdIssuer: brokerIssuer // v2 issuer (spec §4.2)
           clientId: brokerClientId

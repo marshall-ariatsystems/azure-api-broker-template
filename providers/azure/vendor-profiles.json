@@ -8,12 +8,12 @@
       "secretContract": "none",
       "status": "supported by broker entra injection; requires Graph application permissions and tenant consent"
     },
-    "ninjaone": {
-      "route": "ninjaone",
+    "salesforce": {
+      "route": "salesforce",
       "baseUrl": "tenant-api-url",
-      "auth": { "mode": "oauth2cc", "tokenUrl": "tenant-oauth-token-url", "scope": "tenant-api-scope" },
+      "auth": { "mode": "oauth2cc", "tokenUrl": "tenant-oauth-token-url", "scope": "tenant-oauth-scope" },
       "secretContract": "client-id-and-client-secret",
-      "status": "tenant region and OAuth values supplied during onboarding"
+      "status": "tenant API and OAuth values supplied during onboarding"
     },
     "it-glue": {
       "route": "itglue",

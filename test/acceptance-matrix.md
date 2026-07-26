@@ -1,4 +1,21 @@
-# Acceptance matrix (spec §12 parity)
+# Acceptance matrix
+
+## V1 product-package release evidence (in progress)
+
+This is the authoritative V1 matrix for the stateless public-client path. It is deliberately not a
+release approval: the directives remain reopened/design state until an independent reviewer runs
+their barred harness. The older Azure-reference ledger below remains historical provider evidence,
+not proof that the V1 local package is releasable.
+
+| V1 requirement | Evidence command | Current diagnostic result |
+|---|---|---|
+| Invocation-only, fixed-loopback bridge with no local state | `cd clients/bridge && npm test` | PASS — 31 tests, 0 skips |
+| Same-serving-process public PKCE session and broker bearer forwarding seam | `cd clients/bridge && npm test` | PASS — production-session composition test plus V007 runtime contract |
+| Generic OIDC validation, assurance mapping, and generic-mode IaC handoff | `node --test function-node/test/*generic*oidc*.test.js iac/test/auth-mode-template.test.mjs` | PASS — 4 tests |
+| Existing hosted grant gate remains compatible with mandatory grants | `npm --prefix function-node test` | PASS — 19 tests |
+| No legacy `broker.env`/`init` test exclusion | `cd clients/bridge && npm test` | PASS — package script discovers `test/*.test.mjs`; obsolete persistence tests were removed and replaced by stateless runtime coverage |
+
+## Historical Azure-reference parity
 
 > Every spec §12 row mapped to a test and a result. All PASS = v1 deliverable acceptance.
 
@@ -26,7 +43,7 @@
 
 ## Result
 
-**All 19 spec §12 rows: PASS.** v1 deliverable acceptance met.
+**All 19 spec §12 rows: PASS.** This is Azure-reference parity only; it does not greenlight the V1 product package.
 
 ## Carry-over constraints (verified)
 

@@ -7,7 +7,7 @@ the value the broker uses with the vendor.
 | Target | Broker route | Vendor auth held server-side | Current integration path |
 |---|---|---|---|
 | Microsoft Graph | `graph` | Entra workload token for `https://graph.microsoft.com/.default` | Supported by `entra` injection; grant Graph application permissions to the Function workload identity. |
-| NinjaOne | `ninjaone` | OAuth client ID and secret | Use `oauth2cc` after the NinjaOne tenant region, OAuth token URL, and scope are supplied during onboarding. |
+| Salesforce | `salesforce` | OAuth client ID and secret | Use `oauth2cc` after the Salesforce tenant API URL, OAuth token URL, and scope are supplied during onboarding. |
 | IT Glue | `itglue` | API key injected as `x-api-key` | Supported now by header injection; choose the global, EU, or AU API base URL during onboarding. |
 | Meraki Dashboard API v1 | `meraki` | Dashboard API key as a Bearer token, or an OAuth token | Broker-held API-key mode works now. Prefer an organization-scoped OAuth token provider when available. |
 | Datto RMM | `datto-rmm` | API key and API secret exchanged through Datto OAuth | Needs an authorization-code/refresh-token provider; do not force Datto RMM into the client-credentials path. |

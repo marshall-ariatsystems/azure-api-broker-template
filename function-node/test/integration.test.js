@@ -18,6 +18,7 @@ process.env.QUOTA_CALLER_PER_MIN = '2';
 process.env.QUOTA_KEY_PER_MIN = '3';
 process.env.RATE_LIMIT_FAIL_MODE = 'open';
 process.env.RATE_LIMIT_STORAGE_ACCOUNT = 'teststorage';
+process.env.CONNECTION_GRANTS_JSON = JSON.stringify({ version: 1, connections: [{ id: 'azure:test', subjects: ['user:oid-1'] }] });
 
 function loadBroker() {
   delete require.cache[require.resolve(BROKER)];
@@ -147,10 +148,11 @@ test('Issue #3: rejects nested access_token in JSON', async () => {
   assert(res.jsonBody.error.includes('access_token'));
 });
 
-test('Issue #3: rejects token in form body', async () => {
+test('Issue #3: rejects access_token in form body', async () => {
   const h = loadBroker().broker;
   installFetch([{ status: 200, body: '{}' }]);
-  const body = 'name=test&token=xyz';
+  // `token` is deliberately allowed as ordinary API data; `access_token` is credential-shaped.
+  const body = 'name=test&access_token=xyz';
   const req = fakeReq({
     method: 'POST',
     body,
@@ -158,7 +160,7 @@ test('Issue #3: rejects token in form body', async () => {
   });
   const res = await h(req, ctx);
   assert.deepStrictEqual(res.status, 400);
-  assert(res.jsonBody.error.includes('token'));
+  assert(res.jsonBody.error.includes('access_token'));
 });
 
 test('Issue #3: rejects unparseable JSON (fail-closed)', async () => {

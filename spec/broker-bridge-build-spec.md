@@ -1,254 +1,355 @@
-# Broker Bridge Build Specification
+# Broker Product Package Build Specification
 
 ## Purpose
 
-Deliver `broker-bridge` as the plug-and-play local agent for organization-approved API brokers. It must let an existing application retain its familiar endpoint and API-key environment-variable structure while ensuring that no usable vendor credential reaches the client machine.
+Deliver a product package that centralizes access to API keys. A remotely hosted broker stores
+vendor credentials and injects them only after a configured identity provider has authenticated the
+caller and the broker has confirmed that the caller may use the named connection.
 
-The first provider implementation authenticates with Microsoft Entra through `DefaultAzureCredential` (normally an existing `az login` session). The product core proxies only through an approved broker and binds only to loopback by default.
+The local `broker-bridge` package is a signed, stateless compatibility client. It lets existing
+applications keep their familiar endpoint and API-key environment-variable structure, but it holds
+no usable vendor credential and persists no product data. It authenticates with the configured
+identity provider, holds access tokens in memory only, and calls the hosted broker.
 
-## Design goal — security as the easiest path
+This product answers one authorization question:
 
-The secure workflow must be shorter and more familiar than copying a vendor API key. Users should authenticate once with their organization's identity provider (`az login` for the first Azure provider), then start their existing application through the bridge with its normal environment-variable and SDK conventions.
+> May this authenticated identity use this broker-held API-key connection?
 
-The bridge should be nearly invisible to an application developer:
+It does not infer, translate, or enforce vendor-side API permission scopes. The vendor API key's
+own permissions remain the vendor's responsibility.
+
+## Design goal — the secure path is the easy path
+
+An authorized person or workload installs one signed package, authenticates with its organization’s
+identity provider, and starts its application through the bridge. It does not receive, copy,
+configure, or rotate a vendor key.
 
 - Existing base-URL and API-key environment-variable shapes continue to work.
 - A harmless compatibility placeholder such as `broker-managed` replaces a real vendor key.
-- The bridge handles identity-token acquisition and refresh, loopback proxying, broker routing, and vendor-key isolation.
-- Administrators grant or revoke access through their identity provider rather than distributing replacement vendor keys or requiring application code changes.
-- Errors must recommend the shortest remediation, for example `az login` for Azure, instead of exposing provider internals.
+- The local package handles browser sign-in, ephemeral token acquisition and refresh, loopback
+  proxying, broker discovery, and application launch.
+- Administrators manage connections and access grants in a plain-language GUI.
+- A person with no grant receives a denial; a person whose grant is revoked immediately loses the
+  ability to use that connection.
+- Errors recommend the shortest useful remediation without exposing identity-provider, secret-store,
+  or vendor internals.
 
-**Decision rule:** prefer the option that removes a user step without weakening the security invariants below. A user who can follow `broker-bridge init` and `broker-bridge run -- <application>` should not need to understand Key Vault, vendor OAuth, or broker internals.
+**Decision rule:** remove a user step without weakening the security invariants. Normal use must not
+require a terminal, `.env` file, cloud resource names, or knowledge of vendor OAuth.
 
-## Core product architecture
-
-`broker-bridge` is a product core, not an Azure-template helper. The core is provider- and vendor-agnostic: it identifies the caller, loads an approved broker profile, starts a loopback proxy, launches an application, and ensures that the application never receives a usable vendor credential.
+## Product architecture
 
 ```text
-broker agent core
-├── broker profile and discovery contract
-├── local loopback proxy and process launcher
-├── credential-placeholder filtering
-├── diagnostics, updates, and release verification
-├── identity providers
-│   └── Microsoft Entra / DefaultAzureCredential (first implementation)
-├── application adapters
-│   ├── OpenAI environment convention
-│   ├── Anthropic environment convention
-│   └── generic HTTP environment convention
-└── broker providers
-    └── Azure Key Broker / Entra / Key Vault (reference implementation)
+signed local package (stateless)
+  ├── browser sign-in to configured IdP
+  ├── in-memory access token only
+  ├── loopback compatibility proxy and application launcher
+  └── credential-placeholder stripping
+                 │
+                 ▼
+remotely hosted broker
+  ├── IdP token validation and assurance validation
+  ├── identity → connection access-grant check
+  ├── remote secret-provider retrieval and server-side injection
+  ├── rate limits, audit events, and health
+  └── vendor API
 ```
 
-The core must not contain vendor-specific credential handling or Azure-specific authorization rules. Providers supply broker authentication and policy; adapters translate familiar application conventions into the core's local endpoint and harmless placeholder credential.
+The hosted broker is an identity-provider application/resource server. The local package either
+uses the identity provider's supported direct browser sign-in model or is registered as an OAuth/OIDC
+public client. Public clients use Authorization Code with PKCE and have no client secret.
+
+The same signed local package works across identity providers. Identity-provider-specific onboarding
+is delivered as a verified marketplace integration when available, an importable private registration
+package when it is not, and a generic OIDC fallback.
 
 ## Core contracts
 
-### Broker profile
+### Connection
 
-A broker profile is non-secret metadata that tells the agent where and how to reach an approved broker. It contains the broker URL, identity-provider parameters, supported vendor routes, adapter hints, minimum agent version, and profile identity. It may be embedded in an organization distribution, stored locally after first use, or obtained from a trusted broker discovery document.
+A **connection** is a named broker-held vendor credential plus non-secret routing and injection
+metadata. It is stored only by the hosted broker and its remote secret provider. A connection may
+represent a static API key or a client-credential pair used by the broker to mint short-lived vendor
+tokens. No connection credential is returned to a local package or application.
 
-The current Azure profile uses `BROKER_BASE` and `BROKER_SCOPE`. Those are provider-specific inputs, not universal product requirements.
+### Identity provider integration
+
+An **identity provider integration** defines the issuer, audience/resource, signing-key discovery,
+redirect URIs, accepted identity/group/workload claims, and required authentication assurance. The
+first product contract is standard OIDC/OAuth using Authorization Code with PKCE. Provider presets
+are usability additions, not alternative authorization models.
+
+### Access grant
+
+An **access grant** attaches an identity, group, or workload identity from an identity provider to a
+connection. The hosted broker evaluates this grant before every request. It does not inspect a
+vendor request to decide whether a vendor operation is allowed.
+
+### Registration package
+
+An **identity-provider registration package** is a signed, non-secret, provider-specific setup
+artifact for an organization that has not already registered the broker application. It supplies
+only registration metadata and policy templates, including:
+
+- redirect URIs and broker discovery metadata;
+- resource/audience and requested claims or group mappings;
+- the identity assurance requirement, including the FIDO2-only policy contract;
+- initial administrator/access-grant bootstrap; and
+- links or instructions to create the hosted broker tenant.
+
+It must never contain a vendor credential, client secret for the local package, refresh token, or
+customer-specific API key. A marketplace listing is a prebuilt registration package delivered through
+an identity provider’s application catalog.
+
+### Stateless local package
+
+The local package is a signed executable containing the bridge, application adapters, and static
+defaults. It may hold discovery configuration and OAuth tokens in process memory for its current
+run only. It must not persist API credentials, connection profiles, refresh tokens, identity sessions,
+or other product state to disk, the OS credential store, browser storage under its control, or a local
+database.
 
 ### Application adapter
 
-An adapter maps an application's normal configuration shape to the local agent. It may set a base URL and a harmless value such as `broker-managed`, but it must never accept or generate a vendor credential. OpenAI, Anthropic, and generic HTTP are the first adapters.
-
-### Broker provider
-
-A provider verifies the caller identity and enforces broker-side authorization. The Azure provider uses Entra roles, Key Vault, managed identity, quota enforcement, and audit logging. Future providers can use another identity system without changing the agent or adapters.
+An adapter maps an application's normal configuration shape to the loopback bridge. It may set a
+local base URL and `broker-managed`, but it must never accept, generate, or persist a vendor
+credential. OpenAI, Anthropic, and generic HTTP are the initial adapters.
 
 ## Product boundary
 
 | Component | Responsibility |
 |---|---|
-| Broker agent core | Local compatibility proxy, lifecycle, credential-placeholder stripping, profile handling, and application launch. |
-| Application adapter | Familiar SDK/environment-variable conventions for a supported application ecosystem. |
-| Broker provider | Identity validation, authorization, server-side vendor credential retrieval/injection, quotas, and audit logging. |
-| Application | Uses its normal SDK/environment configuration. It never receives a real vendor API key. |
+| Local package | Stateless browser sign-in, in-memory token refresh, compatibility proxy, launcher, and placeholder filtering. |
+| Identity provider | Authenticate users/workloads and issue broker-audience tokens under the organization’s assurance policy. |
+| Hosted broker | Validate identity, check identity-to-connection access, retrieve/inject remote credentials, rate-limit, and audit. |
+| Remote secret provider | Store vendor credentials and make them available only to the hosted broker. |
+| Admin GUI | Connect an IdP, create connections, grant/revoke access, and display health/audit information. |
+| Vendor API | Enforce its own API-key permissions. It does not receive caller identity or broker access tokens. |
 
-The supported product direction is a signed `broker-bridge` executable plus provider implementations. The Azure/Entra/Key Vault broker in this repository is the first reference provider; `broker-client` remains a lower-level tooling option.
-
-## Repository refactor target
-
-The current repository remains a working Azure reference implementation while the product boundaries are made explicit. The intended future structure is:
-
-```text
-broker-agent/             # universal local executable
-broker-adapters/          # OpenAI, Anthropic, generic HTTP, future adapters
-broker-protocol/          # broker profile and discovery contract
-providers/azure/          # Entra + Azure Key Broker reference provider
-examples/azure-template/  # deployment template and walkthroughs
-```
-
-This is a logical refactor target, not an immediate file move. Preserve the current Azure deployment while extracting stable contracts and tests first.
+The existing Azure/Entra/Key Vault broker is a reference hosted-broker provider. Its Entra
+role-to-secret mapping is a migration path to the provider-neutral identity-to-connection access
+grant model, not the public product vocabulary.
 
 ## Security invariants
 
-- Never write, accept as configuration, log, or forward a real vendor API key on the client.
+- Never write, accept as local configuration, log, or forward a real vendor API key on the client.
 - A compatibility value such as `broker-managed` is a non-secret placeholder only.
-- Bind to `127.0.0.1` by default; never default to `0.0.0.0`.
-- Acquire broker access tokens through the selected identity provider; do not implement a separate vendor authentication flow on the client.
-- Remove caller-supplied credential-shaped headers before the bridge calls the broker.
-- Preserve the broker as the only authority for vendor routing and authorization.
+- The local package persists no connection data, tokens, secrets, or identity session state.
+- Bind the loopback proxy to `127.0.0.1` by default; never default to `0.0.0.0`.
+- Authenticate only through the selected identity provider; do not implement a separate vendor
+  authentication flow on the client.
+- Use PKCE and no client secret for a local public OAuth/OIDC client.
+- The hosted broker is the only authority that decides whether an identity may use a connection.
+- Do not implement vendor operation or vendor permission-scope enforcement in the broker.
+- Remove caller-supplied credential-shaped headers before forwarding to the hosted broker.
+- Do not forward the caller’s identity token, identity claims, or broker tokens to the vendor.
+- FIDO2-only use is a product release gate. The system must preserve the IdP assurance evidence
+  necessary to enforce it, even while detailed FIDO2 mechanics are implemented later.
 
-## Phase 1 — Keyless compatibility configuration
+## Phase 1 — Provider-neutral contracts and hosted-broker migration
 
-The first implementation uses the Azure profile contract below. A future generic broker profile supersedes the Azure-specific naming while preserving the keyless configuration guarantee.
+Define the public data model for identity-provider integrations, connections, access grants, and
+audit events. Add a hosted-broker authorization interface that evaluates:
 
-Define an external, untracked `broker.env` contract containing only routing and identity configuration:
-
-```dotenv
-BROKER_BASE=https://broker.example.com/api/broker
-BROKER_SCOPE=api://<broker-app-id>/.default
-BROKER_VENDOR=openai
+```text
+authenticated identity + requested connection → allow or deny
 ```
 
-The bridge must derive runtime-only application settings. For the OpenAI preset:
+Migrate the Azure reference provider from its internal role-to-secret representation to an adapter
+that implements this interface. Preserve the existing Key Vault retrieval, credential scrubbing,
+rate limiting, and vendor injection behavior behind the new contract.
+
+**Acceptance criteria**
+
+- A named connection has no vendor credential in product-visible metadata or local responses.
+- The broker can allow and deny a request solely from identity-to-connection access grants.
+- Existing Azure role mappings can be represented as migration-compatible access grants.
+- No code path evaluates vendor API operations or invents vendor permission scopes.
+
+## Phase 2 — Identity-provider integration and registration packages
+
+Implement standards-based OIDC/OAuth authentication for the hosted broker and local package.
+Support Authorization Code with PKCE for the local public client, token issuer/audience/signature
+validation at the hosted broker, and normalized identities, groups, and workload claims.
+
+Ship three onboarding choices:
+
+1. **Verified marketplace integration** for identity providers that support an application catalog.
+2. **Private registration package** generated or downloaded for an organization-specific IdP setup.
+3. **Generic OIDC** form for a standards-compliant provider without a preset.
+
+The package/setup GUI must explain the setup in identity language: connect identity provider, choose
+who administers access, and require hardware-key assurance. It must not expose cloud resource names
+or require a user to create a local client secret.
+
+**Acceptance criteria**
+
+- A generic OIDC integration can authenticate a local public client without a persisted client secret.
+- A registration package contains no secrets and can be inspected before import.
+- Marketplace and private-registration paths produce equivalent broker claims/audience behavior.
+- Identity, group, and workload claims can be used as access-grant subjects.
+- Token-validation failures return an actionable sign-in/remediation response without leaking token data.
+
+## Phase 3 — Connection access, token lifecycle, limits, and audit
+
+Make identity-to-connection access the mandatory hosted-broker gate. The broker must validate every
+incoming token, resolve the requested connection, evaluate its grants, then retrieve/inject the
+credential only when allowed.
+
+Retain and formalize existing reliability behavior:
+
+- Per-identity and per-connection rate limits return `429` and a meaningful `Retry-After`.
+- The default failure mode for unavailable rate-limit storage is deny/fail-closed; any alternative is
+  an explicit administrator policy.
+- OAuth client-credential vendor tokens remain hosted, cached until shortly before expiry, refreshed
+  before expiry, and re-minted once after an upstream `401`.
+- A static bearer/API key is a static credential and is rotated remotely; it is not “refreshed.”
+- The local package refreshes broker tokens in memory before expiry and honors `Retry-After` without
+  blindly retrying non-idempotent calls.
+- Audit events identify the connection and calling identity without recording vendor keys, bearer
+  tokens, request credentials, or sensitive request/response contents.
+
+**Acceptance criteria**
+
+- Removing a grant causes the next request to be denied without rotating the connection credential.
+- A rate-limited call returns `429` plus `Retry-After`; a compliant client does not retry early.
+- Vendor OAuth expiry and one upstream `401` recovery are covered by integration tests.
+- Neither local logs nor audit events contain vendor or broker access tokens.
+
+## Phase 4 — Stateless compatibility bridge
+
+Deliver the loopback bridge and launcher as a stateless client of the hosted broker. Configuration is
+received during the current authenticated session from signed discovery/bootstrap metadata; it is not
+written as `broker.env` or another persistent local profile. Command invocation may accept a broker
+discovery URL or organization identifier for that run.
+
+The bridge derives runtime-only application settings. For the OpenAI adapter:
 
 ```dotenv
 OPENAI_BASE_URL=http://127.0.0.1:8079/openai/v1
 OPENAI_API_KEY=broker-managed
 ```
 
-`broker-managed` must not be accepted as a vendor credential or written to any persistent application configuration.
-
-**Acceptance criteria**
-
-- A generated configuration template contains no vendor key field.
-- Configuration validation identifies missing `BROKER_BASE` and `BROKER_SCOPE` before the bridge starts.
-- Configuration files are ignored by Git.
-
-## Phase 2 — Application launcher
-
 Add the command surface:
 
 ```text
-broker-bridge serve --config broker.env
-broker-bridge run --config broker.env -- <application> [args...]
+broker-bridge serve --broker <discovery-url>
+broker-bridge run --broker <discovery-url> -- <application> [args...]
 ```
 
-`run` must start the bridge, wait for `/_bridge/health`, launch the child process with the compatibility environment, forward termination signals, return the child's exit status, and stop the bridge on exit.
-
-`serve` retains the existing long-running proxy behavior for container/sidecar use.
+`run` signs in when required, starts the bridge, waits for `/_bridge/health`, launches the child
+process with compatibility settings, forwards termination signals, returns the child exit status,
+clears in-memory state, and stops the bridge on exit. `serve` retains long-running sidecar behavior
+for the lifetime of the process only.
 
 **Acceptance criteria**
 
-- A fixture application receives the injected compatibility environment.
+- A fixture application receives only a loopback URL and non-secret placeholder.
+- Restarting the local package requires fresh discovery/authentication and finds no persisted product state.
 - A failing child process returns its original exit status.
-- Ctrl-C stops both child and bridge without leaving a listener behind.
-- Health-check timeout produces an actionable error.
+- Ctrl-C stops child and bridge without leaving a listener or persistent token/profile behind.
+- Health-check timeout and identity failures produce actionable errors.
 
-## Phase 3 — Vendor presets and explicit mapping
+## Phase 5 — Adapters and credential filtering
 
-Provide standard presets:
+Provide standard adapters:
 
-| Preset | Base URL variable | Placeholder key variable |
+| Adapter | Base URL variable | Placeholder key variable |
 |---|---|---|
 | `openai` | `OPENAI_BASE_URL` | `OPENAI_API_KEY` |
 | `anthropic` | `ANTHROPIC_BASE_URL` | `ANTHROPIC_API_KEY` |
 | `generic` | `VENDOR_BASE_URL` | `VENDOR_API_KEY` |
 
-Every preset uses `broker-managed` as the placeholder. Support explicit environment mapping for SDKs with non-standard variable names:
+Every adapter uses `broker-managed`. Support explicit runtime-only environment mappings for
+non-standard SDKs, but reject a mapping that supplies a credential-shaped or real credential value.
 
-```text
-broker-bridge run --preset openai \
-  --set MY_VENDOR_URL=http://127.0.0.1:8079/openai/v1 \
-  --set MY_VENDOR_KEY=broker-managed \
-  -- <application>
-```
-
-**Acceptance criteria**
-
-- Presets set only endpoint and non-secret placeholder values.
-- Explicit mappings cannot set a value matching a configured or credential-shaped vendor key.
-- The local URL always contains a broker vendor slug.
-
-## Phase 4 — Compatibility and credential stripping
-
-Extend bridge request filtering beyond `Authorization`. Before forwarding to the broker, remove credential-shaped headers case-insensitively, including:
-
-- `x-api-key`, `api-key`, `apikey`, `api_key`
-- `subscription-key`
-- `access_token`, `token`
-- `authorization`
-
-Keep normal request headers and bodies intact. Do not let placeholder credentials trigger rejection in the broker.
+Before forwarding, strip credential-shaped headers case-insensitively, including `x-api-key`,
+`api-key`, `apikey`, `api_key`, `subscription-key`, `access_token`, `token`, and application-supplied
+`authorization`. Keep normal request headers and bodies intact. Never forward hop-by-hop or platform
+headers.
 
 **Acceptance criteria**
 
-- Bearer and API-key style placeholders never reach the broker.
-- The bridge does not forward hop-by-hop or `x-ms-*` platform headers.
-- Header filtering has adversarial tests for casing and alternate credential-header names.
+- Presets and explicit mappings set only endpoints and non-secret placeholders.
+- Placeholder Bearer and API-key values never reach the hosted broker.
+- Filtering has adversarial tests for casing and alternate credential-header names.
+- The local URL always names an authorized broker connection route.
 
-## Phase 5 — Bridge binary packaging
+## Phase 6 — Admin GUI
 
-Package the bridge, rather than the direct client, as the user-facing binary. Build one artifact per platform:
+Build a GUI for the hosted product, not an Azure administration console. Its primary screens are:
 
-```text
-bin/broker-bridge-linux-x64/
-bin/broker-bridge-osx-arm64/
-bin/broker-bridge-win-x64/
-```
+1. **Connect identity provider:** install marketplace integration, import/apply registration package,
+   or use generic OIDC.
+2. **Connections:** name a connection, select credential type, enter a credential write-only into
+   the remote secret provider, and validate non-secret connectivity.
+3. **Access:** choose users, groups, or workload identities that may use each connection; revoke
+   access with confirmation.
+4. **Health and usage:** show broker health, authentication/assurance status, rate-limit outcomes,
+   token-mint/refresh health, and per-identity connection use without exposing credentials.
 
-Use a bundled CommonJS entrypoint with Node Single Executable Application (SEA) packaging. Bundle dependencies before SEA injection because a SEA main script cannot load ordinary third-party modules directly. Embed static defaults, but keep `broker.env` external and editable.
+Use product language such as “who can use this connection?” Do not require normal administrators to
+understand Key Vault, app roles, Function Apps, or vendor OAuth. Provider-specific diagnostics belong
+in an explicitly advanced support view.
 
-If Azure Identity cannot be packaged reliably as a single executable, release a signed OS-native archive containing the bridge and its bundled Node runtime instead. Do not silently ship a partially functional binary.
+**Acceptance criteria**
+
+- An administrator can complete identity setup, create a connection, and grant a group access without a terminal or local config file.
+- Credential values are write-only and never appear in the GUI, response, log, or audit event.
+- A revoked group/user/workload loses access on the next broker request.
+- The GUI makes clear that it controls access to a key, not vendor API permissions.
+
+## Phase 7 — FIDO2 assurance gate
+
+Implement the FIDO2-only access requirement as an identity-assurance validation at the hosted broker
+and in registration-package/preset policy. The concrete mechanism varies by identity provider, but
+the broker must accept only tokens or session evidence meeting the organization’s configured
+hardware-key requirement.
+
+Do not substitute a local password, local secret, or silently weaker MFA method. Detailed provider
+mechanics and UX may evolve, but a release cannot claim FIDO2-only operation without an end-to-end
+test against supported providers.
+
+**Acceptance criteria**
+
+- The registration package documents/configures the required FIDO2 assurance policy.
+- The hosted broker denies a valid identity token that lacks required assurance evidence.
+- A supported IdP integration with a FIDO2 hardware key can complete the full connection-use flow.
+
+## Phase 8 — Signed package, tests, and release automation
+
+Package the bridge as the user-facing binary for Linux x64, macOS ARM64, and Windows x64. Use a
+bundled CommonJS entrypoint with Node SEA where reliable; otherwise ship a signed OS-native archive
+with its bundled runtime. The artifact may embed static defaults but must not embed tenant secrets,
+vendor credentials, or persistent customer profiles.
+
+Each release contains:
+
+- platform archive;
+- SHA-256 checksums;
+- CycloneDX SBOM;
+- artifact provenance attestation; and
+- platform signing where configured.
+
+Required automated coverage includes registration-package secret scanning, generic OIDC/PKCE flow,
+token expiry/refresh, FIDO2-assurance rejection, grant/revocation, rate-limit behavior, credential
+filtering, stateless restart, launcher lifecycle, and packaged smoke tests.
 
 **Acceptance criteria**
 
 - `broker-bridge --version` runs on each supported platform without a separately installed Node runtime.
-- `broker-bridge serve --config fixture.env` starts and serves health.
-- An `az login` identity can acquire a broker token from the packaged build.
-- The binary and extracted runtime do not contain a vendor credential.
-
-## Phase 6 — Automated test coverage
-
-Add unit and integration coverage for the configuration parser, presets, launcher lifecycle, credential filtering, and packaged bridge smoke tests.
-
-Required scenarios:
-
-1. `run` launches a fixture application and supplies compatibility values.
-2. Placeholder Bearer and `x-api-key` values are stripped.
-3. Missing or expired Azure login produces a clear remediation message.
-4. The bridge remains loopback-only by default.
-5. Child exit status and termination handling are preserved.
-6. A packaged executable can run its health and launch smoke tests.
-
-## Phase 7 — Release automation
-
-Extend release automation to build, test, and publish bridge artifacts for Linux x64, macOS ARM64, and Windows x64.
-
-Each release must contain:
-
-- Platform archive
-- SHA-256 checksums
-- CycloneDX SBOM
-- GitHub artifact provenance attestation
-- Optional Windows Authenticode signature when signing secrets are configured
-
-Run packaging smoke tests before release publication. Tagged releases publish; manual workflow runs produce test artifacts only.
-
-## Phase 8 — First-run documentation and UX
-
-Provide a minimal first-run experience:
-
-```text
-az login
-broker-bridge init --preset openai
-broker-bridge run --config broker.env -- <application>
-```
-
-`init` creates a keyless template, explains the broker base URL, scope, and vendor slug, and links to role-assignment guidance. It must never prompt for a vendor API key.
-
-Document container sidecar use separately from local executable use. State clearly that production workloads should use managed identity where available.
+- A clean-machine test installs the package, signs in, starts an authorized app, and finds no persisted product data after exit.
+- The release artifact contains no vendor credential, refresh token, local client secret, or customer-specific profile.
+- Release artifacts are signed where configured, checksumed, SBOM-backed, provenance-attested, and pass smoke tests before publication.
 
 ## Delivery gates
 
-The feature is complete only when:
+The first product package is complete only when:
 
-1. A common SDK can run through the bridge with no real vendor key in its environment or source.
-2. The bridge has stripped every supplied placeholder credential before forwarding.
-3. A packaged executable successfully uses `az login` to call an authorized broker endpoint.
-4. Release artifacts are signed where configured, checksumed, SBOM-backed, and provenance-attested.
-5. Tests cover both local developer launch and headless/managed-identity deployment paths.
+1. An administrator can configure an IdP through a marketplace integration, registration package, or generic OIDC path.
+2. An administrator can create a remote connection and grant a user, group, or workload access without exposing its credential.
+3. An authorized user can run a common SDK through the stateless local package with no real vendor key in its environment, source, or local storage.
+4. An unauthorized or revoked identity cannot use the connection, while the vendor key remains unchanged and remote.
+5. Rate limits, token expiry/refresh, audit redaction, and credential filtering are verified end to end.
+6. FIDO2-only assurance is enforced for every released supported IdP integration.
+7. Release artifacts meet signing, checksum, SBOM, provenance, and clean-machine validation requirements.

@@ -6,7 +6,7 @@ const catalog = JSON.parse(await readFile(new URL('../vendor-profiles.json', imp
 
 test('vendor profile catalog contains the six managed-service targets without credentials', () => {
   assert.deepEqual(Object.keys(catalog.profiles).sort(), [
-    'cipp', 'datto-rmm', 'it-glue', 'meraki', 'microsoft-graph', 'ninjaone',
+    'cipp', 'datto-rmm', 'it-glue', 'meraki', 'microsoft-graph', 'salesforce',
   ]);
   const serialized = JSON.stringify(catalog).toLowerCase();
   assert.doesNotMatch(serialized, /client_secret\s*[:=]|api[_-]?key\s*[:=]|access_token\s*[:=]/);

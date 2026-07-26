@@ -32,7 +32,7 @@ flowchart LR
 
 ### The Candy Store: the vendor API
 
-The outside company (NinjaOne, Microsoft Graph, HCSS, whoever) that has the data you want. It's the
+The outside company (Salesforce, Microsoft Graph, HCSS, whoever) that has the data you want. It's the
 whole reason a password exists in the first place. From its side nothing changes: it hands over candy
 to anyone who whispers a valid password, and it never finds out *which kid* actually asked. All it
 ever sees is the Runner.
@@ -95,7 +95,7 @@ door in the building respects it immediately.
 ### The stickers: app roles · `identity/app-roles.json`, `identity/app-registration.md`
 
 Colored stickers on your badge. Each one means permission to send the Runner to a specific store: a
-"NinjaOne" sticker, a "Graph" sticker, and so on. Being *known* isn't enough on its own; we also have
+"Salesforce" sticker, a "Graph" sticker, and so on. Being *known* isn't enough on its own; we also have
 to say what you're allowed to get.
 
 Handing out access is peeling stickers on and off, and no password ever changes hands. A kid can hold
@@ -181,7 +181,7 @@ something is ambiguous, this is what the project points back to.
 
 | ELI5 | Real thing | Where |
 |---|---|---|
-| Candy store | Vendor API (NinjaOne, Graph, HCSS…) | external |
+| Candy store | Vendor API (Salesforce, Graph, HCSS…) | external |
 | Secret password | Vendor API key / secret | Key Vault |
 | The Safe | Azure Key Vault | `iac/keyvault.bicep` |
 | Magic glove | System-assigned managed identity | the Function |

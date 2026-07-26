@@ -20,6 +20,7 @@ process.env.QUOTA_KEY_PER_MIN = '1000';
 process.env.RATE_LIMIT_TABLE_NAME = 'brokerRateLimits';
 process.env.RATE_LIMIT_FAIL_MODE = 'open'; // fail-open for tests (no Table Storage available)
 process.env.RATE_LIMIT_STORAGE_ACCOUNT = 'teststorage';
+process.env.CONNECTION_GRANTS_JSON = JSON.stringify({ version: 1, connections: [{ id: 'azure:hcss', subjects: ['user:oid-1'] }] });
 
 function loadBroker() {
   delete require.cache[require.resolve(BROKER)];

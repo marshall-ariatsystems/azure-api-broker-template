@@ -8,7 +8,7 @@ Two one-line drop-ins:
   client = broker_openai()                     # <-- the only line you change
   client.chat.completions.create(model="openai/gpt-4o-mini", messages=[...])
 
-  # Any REST vendor (e.g. NinjaOne):
+  # Any REST vendor (e.g. Salesforce):
   from broker_client import get, post
   r = get("/api/broker/v2/organizations")      # Entra-authed, key injected by the broker
 
@@ -76,7 +76,7 @@ def get_token() -> str:
     return _credential.get_token(BROKER_SCOPE).token
 
 
-# --- generic REST helpers (NinjaOne and any other HTTP vendor) ----------------
+# --- generic REST helpers (Salesforce and any other HTTP vendor) ----------------
 # Persistent session -> HTTP keep-alive, so repeated calls reuse the TLS connection instead of
 # paying a fresh handshake (~230 ms) every time. Cuts per-call broker overhead to ~70-100 ms.
 _session = requests.Session()

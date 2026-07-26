@@ -14,6 +14,7 @@ process.env.QUOTA_CALLER_PER_MIN = '1000';
 process.env.QUOTA_KEY_PER_MIN = '1000';
 process.env.RATE_LIMIT_FAIL_MODE = 'open';
 process.env.RATE_LIMIT_STORAGE_ACCOUNT = 'teststorage';
+process.env.CONNECTION_GRANTS_JSON = JSON.stringify({ version: 1, connections: [{ id: 'azure:graph', subjects: ['user:graph-caller'] }] });
 
 let requestedScopes = [];
 function loadBroker() {

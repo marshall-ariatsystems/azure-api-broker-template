@@ -15,6 +15,11 @@ const { SecretClient } = require('@azure/keyvault-secrets');
 const { DefaultAzureCredential } = require('@azure/identity');
 const scrubber = require('./credential-scrubber');
 const rateLimiter = require('./rate-limiter');
+const hostedAuthority = require('./hosted-authority');
+const { createAzureReferenceAdapter } = require('./azure-reference-adapter');
+const connectionGrants = require('./connection-grants');
+const genericOidcAuthority = require('./generic-oidc-authority');
+const { validateOidcAccessToken } = require('./oidc-identity-adapter');
 
 const KEYVAULT_URI = process.env.KEYVAULT_URI;
 const VENDOR_BASE_URL = (process.env.VENDOR_BASE_URL || '').replace(/\/+$/, '');
@@ -47,6 +52,7 @@ function loadRoleMap() {
   return DEFAULT_ROLE_MAP;
 }
 const ROLE_TO_SECRET = Object.freeze(loadRoleMap());
+const azureReferenceAuthority = createAzureReferenceAdapter(ROLE_TO_SECRET);
 // Normalize a map entry to { secret, baseUrl, inject } with global fallbacks.
 // `entra` is intentionally secretless: the Function workload identity mints the token.
 function vendorForRole(role) {
@@ -188,12 +194,44 @@ function rolesFromPrincipal(req) {
   return { roles, claimTypes: [...claimTypes], oid, azp };
 }
 
-app.http('broker', {
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  authLevel: 'anonymous', // Easy Auth enforces authN/authZ at the platform layer.
-  route: 'broker/{*path}',
-  handler: async (req, ctx) => {
+function identityForGrants({ oid, azp }, evidence) {
+  const supplied = typeof evidence === 'function' ? evidence() : undefined;
+  const normalized = supplied && typeof supplied === 'object' ? supplied : {};
+  return connectionGrants.normalizeGrantIdentity({
+    subject: oid ? `user:${oid}` : `workload:${azp}`,
+    ...(OWNED(normalized, 'groups') ? { groups: normalized.groups } : {}),
+    ...(OWNED(normalized, 'workload') ? { workload: normalized.workload } : {}),
+  });
+}
+const OWNED = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+
+async function brokerHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, normalizedEvidence } = {}) {
     if (!secretClient) return { status: 500, jsonBody: { error: 'KEYVAULT_URI not configured' } };
+    let genericEvidence = normalizedEvidence;
+
+    if (process.env.AUTH_MODE === 'oidc') {
+      try {
+        const header = req.headers.get('authorization') || '';
+        const match = /^Bearer\s+(.+)$/i.exec(header);
+        if (!match) throw new Error('missing bearer');
+        const identity = await validateOidcAccessToken({ token: match[1], config: {
+          issuer: process.env.OIDC_ISSUER,
+          audience: process.env.OIDC_AUDIENCE,
+          requiredAcr: process.env.OIDC_REQUIRED_ACR || undefined,
+          requiredAmr: process.env.OIDC_REQUIRED_AMR ? process.env.OIDC_REQUIRED_AMR.split(',').filter(Boolean) : undefined,
+        } });
+        const claims = [{ typ: 'oid', val: identity.oid }, ...(identity.azp ? [{ typ: 'azp', val: identity.azp }] : []), ...identity.roles.map((val) => ({ typ: 'roles', val }))];
+        req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
+        genericEvidence = () => ({ groups: identity.groups });
+      } catch { return { status: 401, jsonBody: { error: 'invalid OIDC bearer' } }; }
+    } else if (process.env.AUTH_MODE === 'generic-oidc') {
+      try {
+        const identity = await genericOidcAuthority.validateRequest(req);
+        const claims = [{ typ: 'oid', val: identity.oid }, { typ: 'azp', val: identity.azp }, ...identity.roles.map((val) => ({ typ: 'roles', val }))];
+        req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
+        genericEvidence = () => ({ groups: identity.groups });
+      } catch { return { status: 401, jsonBody: { error: 'invalid generic bearer' } }; }
+    }
 
     const startedAt = Date.now();
     // 1. Select the vendor role. Vendor-named path wins; otherwise the legacy exactly-one rule.
@@ -246,6 +284,44 @@ app.http('broker', {
       ctx.error(`no vendor base URL for role ${selectedRole} (set VENDOR_BASE_URL or a per-role baseUrl)`);
       return { status: 500, jsonBody: { error: 'vendor base URL not configured' } };
     }
+
+    // Provider-neutral hosted authorization is deliberately before quota, Key Vault, and vendor I/O.
+    let authorityResult;
+    try {
+      const identity = hostedAuthority.normalizeIdentity({ oid, azp, roles });
+      const connection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+      authorityResult = hostedAuthority.authorizeConnection({
+        identity,
+        connection,
+        policy: azureReferenceAuthority.policy,
+      });
+    } catch {
+      authorityResult = { allowed: false };
+    }
+    if (!authorityResult.allowed) {
+      ctx.log(`[broker] DENY oid=${oid} azp=${azp} role=${selectedRole} connection access denied (403)`);
+      return { status: 403, jsonBody: { error: 'connection access denied' } };
+    }
+
+    // Grant configuration is deliberately read and parsed for every request: a revoked grant is
+    // effective on the next call without a handler rebuild or credential rotation.
+    let grantResult;
+    try {
+      const rawGrants = readConnectionGrants();
+      const grants = connectionGrants.parseConnectionGrants(rawGrants, {
+        knownConnectionIds: azureReferenceAuthority.connectionIds,
+      });
+      grantResult = connectionGrants.authorizeGrant({
+        identity: identityForGrants({ oid, azp }, genericEvidence),
+        connection: azureReferenceAuthority.connectionForRole(selectedRole, vendor),
+        grants,
+      });
+    } catch {
+      grantResult = { allowed: false, reason: 'denied' };
+    }
+    const grantConnection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+    ctx.log(`[broker] grant connection=${grantConnection.id} grant=${grantResult.allowed ? 'allowed' : 'denied'}`);
+    if (!grantResult.allowed) return { status: 403, jsonBody: { error: 'connection access denied' } };
 
     // 2. Enforce the distributed per-caller and per-key quota (spec §9) BEFORE touching Key Vault.
     //    Ordering matters: a caller flooding the broker would otherwise drive one Key Vault request
@@ -428,7 +504,17 @@ app.http('broker', {
       respHeaders['x-broker-key-present-on-client'] = 'false';
     }
     return { status: vresp.status, headers: respHeaders, body: respBuf };
-  },
+}
+
+function createBrokerHandler(dependencies) {
+  return (req, ctx) => brokerHandler(req, ctx, dependencies);
+}
+
+app.http('broker', {
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  authLevel: 'anonymous', // Easy Auth enforces authN/authZ at the platform layer.
+  route: 'broker/{*path}',
+  handler: brokerHandler,
 });
 
 // Lightweight health/soak probe — no secret access, no vendor call. Surfaces per-instance uptime and
@@ -452,3 +538,5 @@ app.http('health', {
     },
   }),
 });
+
+module.exports = { createBrokerHandler };

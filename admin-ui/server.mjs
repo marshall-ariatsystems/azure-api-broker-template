@@ -1,233 +1,170 @@
-// server.mjs — local admin UI for the Azure API key broker.
-//
-// Runs ON THE OPERATOR'S MACHINE with the operator's own Azure identity
-// (DefaultAzureCredential -> az login). Nothing is hosted in Azure, no credential is stored by
-// this app, and key values are write-only: they go INTO Key Vault and are never read back or
-// logged. Binds to 127.0.0.1 only.
-//
-//   cd admin-ui && npm install && npm start   ->   http://localhost:8788
-//
-// Configuration — a broker.config.json next to this file (or in the working directory) and/or
-// environment variables. Env wins over file. See broker.config.example.json. Required keys:
-//   sub (BROKER_SUB)        Azure subscription id hosting the broker
-//   rg (BROKER_RG)          resource group of the function app
-//   app (BROKER_APP)        function app name
-//   vault (BROKER_VAULT)    Key Vault name
-//   brokerUrl (BROKER_URL)  https://<app>.azurewebsites.net/api/broker
-//   appObjectId (BROKER_APPOBJ)  Entra APPLICATION OBJECT id of the broker API app registration
-// Optional: port (PORT, default 8788), brandName (BRAND_NAME, shown in the console header).
-
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import process from 'node:process';
-import { DefaultAzureCredential } from '@azure/identity';
-import { SecretClient } from '@azure/keyvault-secrets';
-import { WebSiteManagementClient } from '@azure/arm-appservice';
 
-// Search order for sidecar files (broker.config.json, index.html): the script's own directory,
-// the directory of the running executable (when packaged as a single binary), then the cwd.
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const searchDirs = [...new Set([scriptDir, path.dirname(process.execPath), process.cwd()])];
+const MAX_BODY = 64 * 1024;
+const GRANT_KINDS = new Set(['user', 'group', 'workload']);
+const HANDOFF_KINDS = new Set(['marketplace', 'private', 'generic']);
+const SUBJECT_LOCAL = /^[a-z0-9][a-z0-9._@/-]{0,127}$/;
+const FORBIDDEN = /^(?:scope|operation|secret|credential|baseUrl|authorization|token|vendor|client_secret)$/i;
 
-function findSidecar(name) {
-  for (const d of searchDirs) {
-    const p = path.join(d, name);
-    if (existsSync(p)) return p;
-  }
-  return null;
+const own = (value, keys) => Object.fromEntries(keys.filter((key) => Object.hasOwn(value, key)).map((key) => [key, value[key]]));
+const publicIdentity = (value) => own(value, ['id', 'kind', 'handoffKind', 'displayName', 'issuer', 'status']);
+const publicConnection = (value) => own(value, ['id', 'provider', 'displayName', 'status', 'createdAt']);
+const publicGrant = (value) => own(value, ['id', 'connectionId', 'subject', 'kind']);
+const publicUsage = (value) => own(value, ['connectionId', 'window', 'requests', 'denied', 'status', 'observedAt']);
+const publicAudit = (value) => own(value, ['at', 'action', 'connectionId', 'outcome']);
+const response = (res, code, body) => {
+  res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(JSON.stringify(body));
+};
+const invalid = () => { const error = new Error('invalid request'); error.status = 400; return error; };
+const notFound = () => { const error = new Error('not found'); error.status = 404; return error; };
+
+export function normalizeGrant(kind, subject) {
+  if (typeof kind !== 'string' || typeof subject !== 'string') throw invalid();
+  const normalizedKind = kind.toLowerCase();
+  const expectedPrefix = `${normalizedKind}:`;
+  if (!GRANT_KINDS.has(normalizedKind) || !subject.startsWith(expectedPrefix)) throw invalid();
+  const local = subject.slice(expectedPrefix.length);
+  if (subject !== subject.trim() || subject !== subject.normalize('NFC') || local !== local.toLowerCase() || !SUBJECT_LOCAL.test(local)) throw invalid();
+  return Object.freeze({ kind: normalizedKind, subject: `${normalizedKind}:${local}` });
 }
 
-function loadConfig() {
-  let file = {};
-  const cfgPath = findSidecar('broker.config.json');
-  if (cfgPath) {
-    try { file = JSON.parse(readFileSync(cfgPath, 'utf8')); }
-    catch (e) { console.error(`broker.config.json at ${cfgPath} is not valid JSON: ${e.message}`); process.exit(1); }
+function assertKeys(body, allowed) {
+  if (!body || Array.isArray(body) || typeof body !== 'object') throw invalid();
+  for (const key of Object.keys(body)) if (!allowed.has(key) || FORBIDDEN.test(key) && !allowed.has(key)) throw invalid();
+}
+
+function publicText(value) {
+  return typeof value === 'string' && value.trim() === value && value.length >= 1 && value.length <= 128;
+}
+
+async function readBody(req) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY) throw invalid();
+    chunks.push(Buffer.from(chunk));
   }
-  const cfg = {
-    sub: process.env.BROKER_SUB || file.sub,
-    rg: process.env.BROKER_RG || file.rg,
-    app: process.env.BROKER_APP || file.app,
-    vault: process.env.BROKER_VAULT || file.vault,
-    brokerUrl: (process.env.BROKER_URL || file.brokerUrl || '').replace(/\/+$/, ''),
-    appObjectId: process.env.BROKER_APPOBJ || file.appObjectId,
-    port: Number(process.env.PORT || file.port || 8788),
-    brandName: process.env.BRAND_NAME || file.brandName || 'API Key Broker',
+  if (!size) return {};
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw invalid(); }
+}
+
+function requireConnection(repository, id) {
+  return Promise.resolve(repository.getConnection(id)).then((connection) => {
+    if (!connection) throw notFound();
+    return connection;
+  });
+}
+
+export function createAdminConsole({ requireAdmin, repository, credentialWriter, brokerProbe, auditSink, logger = { info() {} } }) {
+  if (!requireAdmin || !repository || !credentialWriter || !auditSink) throw new TypeError('missing trusted server adapter');
+  const authenticated = async (request) => {
+    const admin = await requireAdmin(request);
+    if (!admin || !Array.isArray(admin.permissions) || !admin.permissions.includes('admin:connections')) {
+      const error = new Error('forbidden'); error.status = 403; throw error;
+    }
+    return admin;
   };
-  const missing = ['sub', 'rg', 'app', 'vault', 'brokerUrl', 'appObjectId'].filter((k) => !cfg[k]);
-  if (missing.length) {
-    console.error(
-      `Missing configuration: ${missing.join(', ')}\n` +
-      `Provide a broker.config.json (searched: ${searchDirs.join(', ')})\n` +
-      `or env vars BROKER_SUB / BROKER_RG / BROKER_APP / BROKER_VAULT / BROKER_URL / BROKER_APPOBJ.\n` +
-      `See broker.config.example.json.`);
-    process.exit(1);
-  }
-  return cfg;
-}
+  const auditMutation = async (action, connectionId, outcome) => auditSink.write({ action, connectionId, outcome });
 
-const CFG = loadConfig();
-
-const credential = new DefaultAzureCredential();
-const secrets = new SecretClient(`https://${CFG.vault}.vault.azure.net`, credential);
-const arm = new WebSiteManagementClient(credential, CFG.sub);
-
-// ---------- helpers ----------
-
-async function graphGet(url) {
-  const tok = await credential.getToken('https://graph.microsoft.com/.default');
-  const r = await fetch(url, { headers: { authorization: `Bearer ${tok.token}` } });
-  if (!r.ok) throw new Error(`Graph ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  return r.json();
-}
-
-async function readAppSettings() {
-  const s = await arm.webApps.listApplicationSettings(CFG.rg, CFG.app);
-  return s.properties || {};
-}
-
-async function readRoleMap() {
-  const props = await readAppSettings();
-  try { return JSON.parse(props.ROLE_SECRET_MAP || '{}'); } catch { return {}; }
-}
-
-async function writeRoleMap(map) {
-  const props = await readAppSettings();
-  props.ROLE_SECRET_MAP = JSON.stringify(map);
-  await arm.webApps.updateApplicationSettings(CFG.rg, CFG.app, { properties: props });
-}
-
-function json(res, code, obj) {
-  res.writeHead(code, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(obj));
-}
-
-async function body(req) {
-  let data = '';
-  for await (const c of req) data += c;
-  return data ? JSON.parse(data) : {};
-}
-
-// ---------- API ----------
-
-async function apiState() {
-  const [health, appSettings, appRoles, secretList] = await Promise.all([
-    // Health: an unauthenticated GET must return 401 (Easy Auth gate up and enforcing).
-    fetch(`${CFG.brokerUrl}/get`).then((r) => ({ status: r.status, healthy: r.status === 401 }))
-      .catch((e) => ({ status: 0, healthy: false, error: e.message })),
-    readAppSettings(),
-    graphGet(`https://graph.microsoft.com/v1.0/applications/${CFG.appObjectId}?$select=appRoles,appId,displayName`)
-      .then((a) => ({ appId: a.appId, displayName: a.displayName, roles: (a.appRoles || []).filter((r) => r.isEnabled) }))
-      .catch((e) => ({ error: e.message, roles: [] })),
-    (async () => {
-      const out = [];
-      for await (const p of secrets.listPropertiesOfSecrets()) {
-        out.push({ name: p.name, updated: p.updatedOn, enabled: p.enabled });
+  return async function api(request, res) {
+    const url = new URL(request.url, 'http://same-origin.invalid');
+    if (!url.pathname.startsWith('/api/')) return false;
+    try {
+      await authenticated(request);
+      if (url.search !== '' || request.url.includes('?')) throw invalid();
+      const { pathname } = url;
+      const method = request.method;
+      if (method === 'GET' && pathname === '/api/identity-integrations') {
+        return response(res, 200, { identityIntegrations: (await repository.listIdentityIntegrations()).map(publicIdentity) });
       }
-      return out;
-    })().catch((e) => [{ name: `(error: ${e.message})`, updated: null, enabled: false }]),
-  ]);
-  let roleMap = {};
-  try { roleMap = JSON.parse(appSettings.ROLE_SECRET_MAP || '{}'); } catch { /* leave empty */ }
-  const defaults = {
-    vendorBaseUrl: appSettings.VENDOR_BASE_URL || '',
-    injectMode: appSettings.INJECT_MODE || 'header',
+      if (method === 'POST' && pathname === '/api/identity-integrations') {
+        const body = await readBody(request); assertKeys(body, new Set(['kind', 'displayName', 'issuer', 'handoffKind']));
+        if (!publicText(body.kind) || !publicText(body.displayName) || typeof body.issuer !== 'string' || !/^https:\/\/.+/.test(body.issuer) || !HANDOFF_KINDS.has(body.handoffKind)) throw invalid();
+        const created = await repository.createIdentityIntegration({ kind: body.kind, displayName: body.displayName, issuer: body.issuer, handoffKind: body.handoffKind, status: 'connected' });
+        return response(res, 201, { identityIntegration: publicIdentity(created) });
+      }
+      if (method === 'GET' && pathname === '/api/connections') {
+        return response(res, 200, { connections: (await repository.listConnections()).map(publicConnection) });
+      }
+      if (method === 'POST' && pathname === '/api/connections') {
+        const body = await readBody(request); assertKeys(body, new Set(['displayName', 'provider', 'credential']));
+        if (!publicText(body.displayName) || !publicText(body.provider) || (Object.hasOwn(body, 'credential') && typeof body.credential !== 'string')) throw invalid();
+        const id = `connection:${crypto.randomUUID()}`;
+        if (Object.hasOwn(body, 'credential')) {
+          const stored = await credentialWriter.write({ connectionId: id, credential: body.credential });
+          if (!stored || stored.stored !== true) throw invalid();
+        }
+        const created = await repository.createConnection({ id, displayName: body.displayName, provider: body.provider, status: 'healthy', createdAt: new Date().toISOString() });
+        await auditMutation('connection.created', created.id, 'allowed');
+        return response(res, 201, { connection: publicConnection(created) });
+      }
+      const credentialMatch = pathname.match(/^\/api\/connections\/([^/]+)\/credential$/);
+      if (method === 'POST' && credentialMatch) {
+        const connection = await requireConnection(repository, decodeURIComponent(credentialMatch[1]));
+        const body = await readBody(request); assertKeys(body, new Set(['credential']));
+        if (typeof body.credential !== 'string') throw invalid();
+        const stored = await credentialWriter.write({ connectionId: connection.id, credential: body.credential });
+        if (!stored || stored.stored !== true) throw invalid();
+        await auditMutation('connection.credential.updated', connection.id, 'allowed');
+        return response(res, 200, { connection: publicConnection(connection) });
+      }
+      const grantsMatch = pathname.match(/^\/api\/connections\/([^/]+)\/grants(?:\/([^/]+))?$/);
+      if (grantsMatch) {
+        const connection = await requireConnection(repository, decodeURIComponent(grantsMatch[1]));
+        if (method === 'GET' && !grantsMatch[2]) return response(res, 200, { grants: (await repository.listGrants(connection.id)).map(publicGrant) });
+        if (method === 'POST' && !grantsMatch[2]) {
+          const body = await readBody(request); assertKeys(body, new Set(['kind', 'subject']));
+          const grant = normalizeGrant(body.kind, body.subject);
+          if ((await repository.listGrants(connection.id)).some((item) => item.subject === grant.subject)) throw invalid();
+          const created = await repository.createGrant({ id: `grant:${crypto.randomUUID()}`, connectionId: connection.id, ...grant });
+          await auditMutation('grant.created', connection.id, 'allowed');
+          return response(res, 201, { grant: publicGrant(created) });
+        }
+        if (method === 'DELETE' && grantsMatch[2]) {
+          const deleted = await repository.deleteGrant(connection.id, decodeURIComponent(grantsMatch[2]));
+          if (!deleted) throw notFound();
+          await auditMutation('grant.deleted', connection.id, 'allowed');
+          return response(res, 200, { grant: publicGrant(deleted) });
+        }
+      }
+      const observedMatch = pathname.match(/^\/api\/connections\/([^/]+)\/(health|usage|audit)$/);
+      if (method === 'GET' && observedMatch) {
+        const connection = await requireConnection(repository, decodeURIComponent(observedMatch[1]));
+        if (observedMatch[2] === 'health') {
+          const usage = await repository.getUsage(connection.id);
+          return response(res, 200, { health: own({ connectionId: connection.id, status: usage?.status || connection.status }, ['connectionId', 'status']) });
+        }
+        if (observedMatch[2] === 'usage') return response(res, 200, { usage: publicUsage(await repository.getUsage(connection.id)) });
+        return response(res, 200, { audit: (await repository.listAudit(connection.id)).map(publicAudit) });
+      }
+      throw notFound();
+    } catch (error) {
+      const code = error?.status === 403 ? 403 : error?.status === 404 ? 404 : error?.status === 400 ? 400 : 401;
+      return response(res, code, { error: code === 404 ? 'not found' : code === 401 ? 'unauthorized' : code === 403 ? 'forbidden' : 'invalid request' });
+    }
   };
-  return { config: CFG, brandName: CFG.brandName, health, roleMap, defaults, app: appRoles, secrets: secretList };
 }
 
-// Credential-free vendor reachability probe. The URL is resolved SERVER-SIDE from the role's
-// mapping (never taken from the browser); no credentials of any kind are sent.
-async function apiProbe(b) {
-  const role = String(b.role || '').trim();
-  const map = await readRoleMap();
-  const entry = map[role];
-  if (!entry) throw new Error(`role ${role || '(empty)'} is not mapped`);
-  const settings = await readAppSettings();
-  const url = (typeof entry === 'object' && entry.baseUrl) || settings.VENDOR_BASE_URL;
-  if (!url) throw new Error('no vendor base URL configured for this role');
-  const started = Date.now();
-  try {
-    const r = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10_000) });
-    return { ok: true, url, status: r.status, ms: Date.now() - started };
-  } catch (e) {
-    return { ok: false, url, error: e.message, ms: Date.now() - started };
-  }
-}
-
-async function apiSaveSecret(b) {
-  const name = String(b.name || '').trim();
-  if (!/^[0-9a-zA-Z-]{1,127}$/.test(name)) throw new Error('secret name must be 1-127 chars of letters, digits, dashes');
-  let value;
-  if (b.kind === 'pair') {
-    const idField = String(b.idField || 'keyId').trim();
-    const secretField = String(b.secretField || 'secret').trim();
-    if (!b.id || !b.secretVal) throw new Error('both id and secret are required for a pair');
-    value = JSON.stringify({ [idField]: b.id, [secretField]: b.secretVal });
-  } else {
-    if (!b.value) throw new Error('key value is required');
-    value = String(b.value);
-  }
-  await secrets.setSecret(name, value);
-  return { ok: true, name }; // value intentionally not echoed
-}
-
-async function apiSaveMapping(b) {
-  const role = String(b.role || '').trim();
-  if (!role) throw new Error('role is required');
-  const map = await readRoleMap();
-  if (b.remove) {
-    delete map[role];
-  } else {
-    const secret = String(b.secret || '').trim();
-    if (!secret) throw new Error('secret name is required');
-    const entry = { secret };
-    for (const k of ['baseUrl', 'inject', 'tokenUrl', 'scope', 'idField', 'secretField']) {
-      if (b[k]) entry[k] = String(b[k]).trim();
+export function createHttpHandler(options) {
+  const api = createAdminConsole(options);
+  const indexPath = new URL('./index.html', import.meta.url);
+  return async (request, responseWriter) => {
+    if (await api(request, responseWriter) !== false) return;
+    const url = new URL(request.url, 'http://same-origin.invalid');
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html') && url.search === '') {
+      responseWriter.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      responseWriter.end(await readFile(fileURLToPath(indexPath)));
+      return;
     }
-    // Plain string form when only a secret is given (keeps the setting easy to read).
-    map[role] = Object.keys(entry).length === 1 ? secret : entry;
-  }
-  await writeRoleMap(map);
-  return { ok: true, role, map };
+    response(responseWriter, 404, { error: 'not found' });
+  };
 }
 
-async function apiRestart() {
-  await arm.webApps.restart(CFG.rg, CFG.app);
-  return { ok: true };
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const unavailable = () => { throw new Error('A hosted adapter must supply trusted administrator and repository services.'); };
+  http.createServer(createHttpHandler({ requireAdmin: unavailable, repository: {}, credentialWriter: {}, auditSink: {} })).listen(8788);
 }
-
-// ---------- server ----------
-
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  try {
-    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-      const indexPath = findSidecar('index.html');
-      if (!indexPath) return json(res, 500, { error: `index.html not found (searched: ${searchDirs.join(', ')})` });
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(await readFile(indexPath));
-    } else if (req.method === 'GET' && url.pathname === '/api/state') {
-      json(res, 200, await apiState());
-    } else if (req.method === 'POST' && url.pathname === '/api/secret') {
-      json(res, 200, await apiSaveSecret(await body(req)));
-    } else if (req.method === 'POST' && url.pathname === '/api/mapping') {
-      json(res, 200, await apiSaveMapping(await body(req)));
-    } else if (req.method === 'POST' && url.pathname === '/api/restart') {
-      json(res, 200, await apiRestart());
-    } else if (req.method === 'POST' && url.pathname === '/api/probe') {
-      json(res, 200, await apiProbe(await body(req)));
-    } else {
-      json(res, 404, { error: 'not found' });
-    }
-  } catch (e) {
-    json(res, 500, { error: e.message });
-  }
-});
-
-server.listen(CFG.port, '127.0.0.1', () => {
-  console.log(`broker admin UI -> http://localhost:${CFG.port}  (vault=${CFG.vault} app=${CFG.app})`);
-});
