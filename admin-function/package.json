@@ -1,16 +1,16 @@
 {
-  "name": "broker-cxapi",
-  "version": "0.1.0",
-  "description": "Minimal Entra-fronted vendor key broker (Node 22, Flex Consumption).",
-  "main": "src/*.js",
+  "name": "tessera-operator-console",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Private Azure-native operator console for Tessera broker connections.",
+  "main": "src/admin.js",
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "sh -c 'for file in src/*.js; do node --check \"$file\"; done'"
   },
   "dependencies": {
-    "@tessera/build-sdk": "file:../sdk",
     "@azure/app-configuration": "^1.8.0",
-    "@azure/data-tables": "^13.2.0",
+    "@azure/data-tables": "^13.3.0",
     "@azure/functions": "^4.5.0",
     "@azure/identity": "^4.5.0",
     "@azure/keyvault-secrets": "^4.9.0"

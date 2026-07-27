@@ -256,7 +256,7 @@ called out so the local agent can grow without turning its core into Azure-only 
 | `iac/foundation.bicep` | RG, two subnets on your existing VNet (delegated integration + private endpoint), Flex Consumption Function, private endpoint, private DNS zone, system-assigned MI, App Insights, storage, Easy Auth. |
 | `iac/modules/private-endpoint-subnet.bicep` | Private endpoint subnet + the **NSG that enforces the IP allow/deny list**. |
 | `iac/keyvault.bicep` | Key Vault (soft-delete + purge protection, RBAC), one secret per vendor key, MI scoped to **only** the vendor-key secrets. |
-| `iac/auth.bicep`, `iac/network-design.md`, `iac/outputs.json` | Easy Auth config, VNet reuse, deploy-time outputs. |
+| `iac/auth.bicep`, `iac/network-design.md`, `deploy/` | Easy Auth config, VNet reuse, and generated local deployment state. |
 | `identity/` | App registration guide, role → secret map, grant/revoke runbook. |
 | `cicd/` | One-command vendor onboarding, GitHub OIDC federation, sample workflow. |
 | `clients/` | Bridge proxy, native clients, dev quickstart, developer security runbook, key-free sample env. |

@@ -72,6 +72,9 @@ param genericOidcAudience string = ''
 param genericOidcClaimMapJson string = '{}'
 param genericOidcAssuranceJson string = '{}'
 
+@description('Non-secret broker settings migrated from the prior deployment or supplied by the operator. These values override only the broker runtime defaults below; platform and identity settings remain owned by this template.')
+param brokerSettings object
+
 // ----------------------------------------------------------------------------
 // Naming convention
 // ----------------------------------------------------------------------------
@@ -79,6 +82,7 @@ var prefix = 'apibkr-${namingSuffix}'
 var storageName = toLower(replace('st${namingSuffix}${uniqueString(resourceGroup().id)}', '-', ''))
 var funcAppName = '${prefix}-func'
 var appInsightsName = '${prefix}-ai'
+var logAnalyticsWorkspaceName = '${prefix}-log'
 var appPlanName = '${prefix}-plan'
 var kvName = '${prefix}-kv'
 var vnetIntegrationSubnetName = '${prefix}-vnet-integ-subnet'
@@ -187,17 +191,23 @@ module dependenciesPe 'modules/dependencies-private-endpoints.bicep' = if (deplo
     keyVaultId: keyVault.id
     namingPrefix: prefix
   }
-  dependsOn: [
-    storage
-    keyVault
-    peSubnet
-  ]
 }
 
 // ----------------------------------------------------------------------------
 // Application Insights (telemetry backend; spec §10, §13)
 // https://learn.microsoft.com/en-us/azure/azure-monitor/app/asp-net-core
 // ----------------------------------------------------------------------------
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: logAnalyticsWorkspaceName
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
@@ -205,6 +215,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     IngestionMode: 'LogAnalytics'
+    WorkspaceResourceId: logAnalyticsWorkspace.id
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Disabled'
   }
@@ -224,7 +235,7 @@ resource flexPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
     tier: 'FlexConsumption'
   }
   properties: {
-    maximumElasticWorkerCount: maximumInstanceCount
+    reserved: true
   }
 }
 
@@ -458,15 +469,39 @@ resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneG
 // https://learn.microsoft.com/en-us/azure/key-vault/general/rbac-guide
 // https://learn.microsoft.com/en-us/azure/app-service/app-service-key-vault-references
 // ----------------------------------------------------------------------------
+var defaultBrokerSettings = {
+  AUTH_MODE: authMode
+  GENERIC_OIDC_ISSUER: genericOidcIssuer
+  GENERIC_OIDC_AUDIENCE: genericOidcAudience
+  GENERIC_OIDC_CLAIM_MAP: genericOidcClaimMapJson
+  GENERIC_OIDC_ASSURANCE: genericOidcAssuranceJson
+  VENDOR_BASE_URL: 'https://api.vendor.example.com'
+  INJECT_MODE: 'header'
+  VENDOR_KEY_HEADER_NAME: 'x-api-key'
+  VENDOR_KEYID_HEADER_NAME: 'x-api-key-id'
+  VENDOR_SECRET_HEADER_NAME: 'x-api-secret'
+  SECRET_CACHE_TTL_SECONDS: '300'
+  RATE_LIMIT_STORAGE_ACCOUNT: storageName
+  RATE_LIMIT_FAIL_MODE: 'closed'
+  RATE_LIMIT_TABLE_NAME: 'brokerRateLimits'
+  BROKER_AUDIT_STORAGE_ACCOUNT: storageName
+  BROKER_AUDIT_TABLE_NAME: 'operatorAudit'
+  QUOTA_CALLER_PER_MIN: '60'
+  QUOTA_KEY_PER_MIN: '600'
+  KEYVAULT_URI: keyVault.properties.vaultUri
+  APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
+  AzureWebJobsStorage: ''
+  AzureWebJobsStorage__accountName: storageName
+  AzureWebJobsStorage__credential: 'managedidentity'
+  ROLE_SECRET_MAP: '{"VendorApi.KeyA.Invoke":"vendor-api-key-team-a","VendorApi.KeyB.Invoke":"vendor-api-key-team-b","VendorApi.KeyC.Invoke":"vendor-api-key-ci","VendorApi.Admin.Test":"vendor-api-key-canary"}'
+}
+
 resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
   properties: {
-    AUTH_MODE: authMode
-    GENERIC_OIDC_ISSUER: genericOidcIssuer
-    GENERIC_OIDC_AUDIENCE: genericOidcAudience
-    GENERIC_OIDC_CLAIM_MAP: genericOidcClaimMapJson
-    GENERIC_OIDC_ASSURANCE: genericOidcAssuranceJson
+    ...union(defaultBrokerSettings, brokerSettings)
+    /*
     // --- Vendor API gateway configuration (spec §6.2, §9) ---
     VENDOR_BASE_URL: 'https://api.vendor.example.com' // Replaced at deploy time with real vendor URL
     INJECT_MODE: 'header' // 'header' | 'bearer' | 'pair' | 'basic' | 'oauth2cc' | 'entra' (spec §6.2, §9)
@@ -543,12 +578,12 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     // vendor-api-key-team-b, vendor-api-key-ci, vendor-api-key-canary.
     // Per function-node/src/broker.js loadRoleMap(): if ROLE_SECRET_MAP is invalid/missing,
     // broker falls back to built-in defaults (which DO NOT match keyvault.bicep).
-    ROLE_SECRET_MAP: '{"VendorApi.KeyA.Invoke":"vendor-api-key-team-a","VendorApi.KeyB.Invoke":"vendor-api-key-team-b","VendorApi.KeyC.Invoke":"vendor-api-key-ci","VendorApi.Admin.Test":"vendor-api-key-canary"}'
+    */
   }
 }
 
 // ----------------------------------------------------------------------------
-// Key Vault (created here so the principalId is emitted in outputs.json for A2 to bind RBAC).
+// Key Vault (created here so the principalId is emitted to deployment output for scoped RBAC).
 // Full RBAC scoping is in keyvault.bicep (A2).
 // https://learn.microsoft.com/en-us/azure/key-vault/general/overview
 // ----------------------------------------------------------------------------

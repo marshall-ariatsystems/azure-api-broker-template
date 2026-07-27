@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# setup-pi.sh — bootstrap the cxkey broker client on a pi agent.
+# setup-pi.sh — bootstrap a Tessera broker client on a headless agent.
 #
 # Copy this dir (broker_client.py, test_broker.py, setup-pi.sh) to the pi, then run:
 #   ./setup-pi.sh
-#   nano broker.env          # paste the pi-agent client secret
+#   nano broker.env          # fill your workload identity values
 #   source broker.env
 #   .broker-venv/bin/python test_broker.py     # A/B/D/E should PASS
 #
@@ -20,9 +20,9 @@ python3 -m venv "$VENV"
 echo "[2/4] env template -> $HERE/broker.env"
 if [ ! -f "$HERE/broker.env" ]; then
   cat > "$HERE/broker.env" <<'ENV'
-# cxkey pi-agent identity (SP: cxkey-pi-agent). Fill AZURE_CLIENT_SECRET, then: source broker.env
-export AZURE_TENANT_ID=6a776d8b-0d62-4acb-945a-a51042d17ac0
-export AZURE_CLIENT_ID=1cea04a4-0e41-4959-a4f4-f4e36038d85f
+# Headless workload identity. Fill all values from your own deployment, then: source broker.env
+export AZURE_TENANT_ID=<tenant-id>
+export AZURE_CLIENT_ID=<workload-client-id>
 export AZURE_CLIENT_SECRET=CHANGE_ME
 # Set these deployment-specific values before using the client or reachability probe.
 export BROKER_HOST="<function-app>.azurewebsites.net"
@@ -30,7 +30,7 @@ export BROKER_SCOPE="api://<broker-app-id>/.default"
 # Optional: export BROKER_IP="<private-ip>" for invocation-scoped DNS pinning.
 ENV
   chmod 600 "$HERE/broker.env"
-  echo "  created broker.env (chmod 600) — set AZURE_CLIENT_SECRET before sourcing"
+  echo "  created broker.env (chmod 600) — set the workload identity values before sourcing"
 else
   echo "  broker.env already exists — leaving it"
 fi
@@ -51,7 +51,7 @@ else
 fi
 
 echo "[4/4] done. Next:"
-echo "  1) edit $HERE/broker.env  -> paste the pi-agent client secret into AZURE_CLIENT_SECRET"
+echo "  1) edit $HERE/broker.env  -> set the workload identity values"
 echo "  2) source $HERE/broker.env"
 echo "  3) $VENV/bin/python $HERE/test_broker.py   # expect A/B/D/E PASS"
 echo

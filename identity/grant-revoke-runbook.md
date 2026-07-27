@@ -6,10 +6,10 @@
 
 ```bash
 TENANT_ID='11111111-1111-1111-1111-111111111111'        # PLACEHOLDER
-BROKER_CLIENT_ID='00000000-0000-0000-0000-000000000000'   # PLACEHOLDER (from identity/outputs.json)
+BROKER_CLIENT_ID='<broker-application-client-id>'          # from generated local deployment state
 APP_ID_URI="api://$BROKER_CLIENT_ID"
-KV_NAME='apibkr-optd-kv'                                 # from iac/outputs.json
-FUNC_PRINCIPAL_ID='PLACEHOLDER_SYSTEM_ASSIGNED_MANAGED_IDENTITY_PRINCIP_ID'  # from iac/outputs.json
+KV_NAME='<key-vault-name>'                                # from generated local deployment state
+FUNC_PRINCIPAL_ID='<broker-managed-identity-principal-id>' # from generated local deployment state
 ```
 
 ## 1. Apply the app-role manifest (spec §4.3)

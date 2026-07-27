@@ -11,7 +11,7 @@ from this template.
 
 ## 1. Fill the broker-instance values (once per instance)
 
-From `iac/outputs.json` and `identity/outputs.json` after the instance is deployed:
+From generated local deployment state after the instance is deployed:
 
 ```bash
 export SUBSCRIPTION=<sub-guid>

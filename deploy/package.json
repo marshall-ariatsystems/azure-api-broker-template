@@ -1,0 +1,9 @@
+{
+  "name": "@tessera/deploy",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "bin": { "tessera": "./tessera.mjs" },
+  "scripts": { "test": "node --test checks/*.test.mjs", "lint": "node --check tessera.mjs && node --check lib/*.mjs" },
+  "engines": { "node": ">=22" }
+}

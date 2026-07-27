@@ -51,6 +51,12 @@ function runPreflight({ principal, routeSlug, roleSecretMap, connectionGrantsJso
 
   const [role, entry] = selected;
   if (!roles.includes(role)) return frozenResult({ status: 403, correlationId: id, subjectType: identity.subjectType, authorization: 'role-denied' });
+  // A disabled operator-managed connection is intentionally indistinguishable from an
+  // unavailable route at this credential-free boundary. This keeps preflight aligned with
+  // the main broker handler without disclosing configuration state to callers.
+  if (entry && typeof entry === 'object' && entry.enabled === false) {
+    return frozenResult({ status: 403, correlationId: id, subjectType: identity.subjectType, authorization: 'route-denied' });
+  }
 
   const connectionId = connectionIdForRole(role, entry);
   const grants = parseConnectionGrants(connectionGrantsJson, { knownConnectionIds: Object.freeze([connectionId]) });

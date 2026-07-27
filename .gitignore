@@ -41,4 +41,11 @@ examples/
 
 # park: local "where we left off" notes (not committed)
 .park/
+
+# Generated deployment state contains resource identifiers for one instance.
+# It is never source-controlled or used as an input for another tenant.
+.tessera/
 handoffs/
+
+# Local Azure deployment plans, operation records, and generated diagnostics.
+.azure/

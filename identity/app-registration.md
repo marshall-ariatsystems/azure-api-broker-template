@@ -1,6 +1,6 @@
 # Broker app registration (spec §4, §4.3)
 
-> All steps use the `az` CLI (no Azure MCP server). The client-id is a **placeholder** substituted at deploy time; record it as such in `identity/outputs.json`.
+> The deployment CLI creates the application registration and records non-secret identifiers in generated local deployment state. Do not commit those identifiers.
 
 ## 1. Create the Broker API app registration
 
