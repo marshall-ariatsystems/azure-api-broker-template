@@ -25,6 +25,7 @@
 - [What it does](#what-it-does)
 - [How a request flows](#how-a-request-flows)
 - [Deploy it](#deploy-it)
+- [Admin UI and operator CLI](#admin-ui-and-operator-cli)
 - [Call it](#call-it)
 - [Run an existing app through the bridge](#run-an-existing-app-through-the-bridge)
 - [Onboard a vendor](#onboard-a-vendor)
@@ -113,21 +114,41 @@ production control plane singular while retaining practical clients for common c
 
 ## Deploy it
 
-Full Portal-and-CLI walkthrough: **[docs/SYSADMIN-GUIDE.md](docs/SYSADMIN-GUIDE.md)**.
+Tessera ships with a tenant-neutral deployment CLI. It creates the isolated network, broker,
+operator console, Entra applications, managed identities, policy store, and redacted local state
+from one configuration file. It never accepts or prints a vendor credential.
 
-1. **Use this template** → create your instance repo (e.g. `broker-<org>`).
-2. Deploy infra with `iac/foundation.bicep` + `iac/keyvault.bicep`. See
-   [`iac/network-design.md`](iac/network-design.md) for the existing-VNet integration.
-3. Create the Entra broker app: follow [`identity/app-registration.md`](identity/app-registration.md),
-   define app roles from [`identity/app-roles.json`](identity/app-roles.json), apply Easy Auth with
-   `iac/auth.bicep`.
-4. Deploy the broker, `function-node/` as a Node 22 Flex Consumption zip. Set `KEYVAULT_URI`,
-   `ROLE_SECRET_MAP`, and the vendor defaults as app settings.
-5. Commit `admin-ui/broker.config.json` (copy `admin-ui/broker.config.example.json`) with your
-   subscription, resource group, app, vault, app object ID, and `brandName`.
-6. Deploy alerts with `observability/alerts.bicep`.
+```bash
+cp deploy/config.example.json tessera.production.json
+node deploy/tessera.mjs doctor --config tessera.production.json
+node deploy/tessera.mjs deploy --config tessera.production.json
+```
 
-Template owns code and mechanism; your instance repo owns identity, branding, and releases.
+The configuration supplies only your subscription, region, resource-group name, explicit operator
+CIDRs, and non-overlapping VNet ranges. Generated state is stored locally under `.tessera/` and is
+ignored by Git. Full prerequisites, network requirements, deployment ordering, and recovery notes
+are in [docs/deployment/README.md](docs/deployment/README.md).
+
+### Admin UI and operator CLI
+
+The Entra-protected Admin UI is deployed with the broker. It provides vendor inventory, assigned
+roles, connection and grant management, write-only credential rotation, and vendor-specific audit
+visibility. Access is limited to the configured operator CIDRs and the `Tessera.Operator` Entra role.
+
+The same deployment state drives non-interactive operator actions:
+
+```bash
+node deploy/tessera.mjs outputs --state .tessera/production.json
+node deploy/tessera.mjs vendor provision --state .tessera/production.json \
+  --id example-vendor --name "Example Vendor" --auth api-key \
+  --base-url https://api.example.invalid --secret-file ./vendor-credential.txt
+node deploy/tessera.mjs grant --state .tessera/production.json \
+  --connection azure:example-vendor --kind user --subject user:<object-id>
+```
+
+`vendor provision` reads the credential only from a local file, writes it to Key Vault, and never
+echoes it. See the [deployment guide](docs/deployment/README.md) for all operator commands and
+deployment gotchas.
 
 ## Call it
 
@@ -253,10 +274,11 @@ called out so the local agent can grow without turning its core into Azure-only 
 | `spec/azure-api-key-broker-spec.md` | Canonical spec, the source of truth. |
 | `spec/broker-bridge-build-spec.md` | Eight-phase plan for the provider- and vendor-agnostic bridge product. |
 | `function-node/src/broker.js` | **Deployed broker** (Node 22): role and vendor-named selection, Key Vault fetch + cache, credential scrub, server-side inject, `oauth2cc` token minting. |
-| `iac/foundation.bicep` | RG, two subnets on your existing VNet (delegated integration + private endpoint), Flex Consumption Function, private endpoint, private DNS zone, system-assigned MI, App Insights, storage, Easy Auth. |
+| `iac/foundation.bicep` | Broker foundation: isolated VNet integration, private endpoint, Flex Consumption Function, system-assigned identity, App Insights, storage, and Easy Auth. |
 | `iac/modules/private-endpoint-subnet.bicep` | Private endpoint subnet + the **NSG that enforces the IP allow/deny list**. |
 | `iac/keyvault.bicep` | Key Vault (soft-delete + purge protection, RBAC), one secret per vendor key, MI scoped to **only** the vendor-key secrets. |
 | `iac/auth.bicep`, `iac/network-design.md`, `deploy/` | Easy Auth config, VNet reuse, and generated local deployment state. |
+| `admin-function/`, `iac/management.bicep`, `iac/management-auth.bicep` | Entra-protected Admin UI and management API, with separate identity and policy permissions. |
 | `identity/` | App registration guide, role → secret map, grant/revoke runbook. |
 | `cicd/` | One-command vendor onboarding, GitHub OIDC federation, sample workflow. |
 | `clients/` | Bridge proxy, native clients, dev quickstart, developer security runbook, key-free sample env. |
