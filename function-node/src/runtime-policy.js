@@ -2,6 +2,7 @@
 
 const { AppConfigurationClient } = require('@azure/app-configuration');
 const { DefaultAzureCredential } = require('@azure/identity');
+const { normalizeEndpointPolicy } = require('./endpoint-policy');
 
 const ROLE_MAP_KEY = 'tessera:broker:role-map';
 const GRANTS_KEY = 'tessera:broker:connection-grants';
@@ -21,6 +22,11 @@ function validRoleMap(value) {
     if (Object.prototype.hasOwnProperty.call(entry, 'displayName') && (typeof entry.displayName !== 'string' || !entry.displayName || entry.displayName.length > 256)) throw new TypeError('role map policy is invalid');
     if (Object.prototype.hasOwnProperty.call(entry, 'vendor') && (typeof entry.vendor !== 'string' || !entry.vendor || entry.vendor.length > 256)) throw new TypeError('role map policy is invalid');
     if (Object.prototype.hasOwnProperty.call(entry, 'lastRotatedAt') && (typeof entry.lastRotatedAt !== 'string' || Number.isNaN(Date.parse(entry.lastRotatedAt)))) throw new TypeError('role map policy is invalid');
+    // Optional per-endpoint lockdown. Validate at load so an operator gets early feedback; a
+    // malformed policy is also fail-closed at request time as a second line of defense.
+    if (Object.prototype.hasOwnProperty.call(entry, 'endpoints')) {
+      try { normalizeEndpointPolicy(entry.endpoints); } catch { throw new TypeError('role map policy is invalid'); }
+    }
   }
   return value;
 }

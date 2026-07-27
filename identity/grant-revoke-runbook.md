@@ -102,7 +102,55 @@ az ad app role assignment remove --id "$BROKER_CLIENT_ID" --role "$ROLE_C_ID" --
 # If a key is suspected exposed: rotate it (§6) AND revoke the role that selected it.
 ```
 
-## 8. Break-glass (spec §8)
+## 8. Lock down which endpoints a connection may reach
+
+A role (connection) forwards every vendor path by default. To restrict it to specific endpoints,
+add an optional `endpoints` object to that role's entry in the role map. Two modes:
+
+- `"mode": "allow"` — **default-deny**: only the listed endpoints pass. Best for a least-privilege
+  OpenAI connection.
+- `"mode": "deny"` — **default-allow**: everything passes except the listed endpoints. Best for
+  carving a few dangerous paths out of an otherwise-open connection.
+
+Each rule matches on `path` (exact, or a subtree when `"prefix": true`) and an optional `methods`
+array (any method when omitted). Enforcement is server-side, **before** the quota check and Key
+Vault fetch, and fails closed: a locked-down or unmatched path returns `403 endpoint not permitted
+for this connection` and never spends a vendor call.
+
+Example — an OpenAI connection limited to chat, embeddings, and model listing:
+
+```jsonc
+// tessera:broker:role-map  (App Configuration) — or the ROLE_SECRET_MAP app setting
+{
+  "VendorApi.Openai.Invoke": {
+    "secret": "openai-key",
+    "baseUrl": "https://api.openai.com",
+    "inject": "bearer",
+    "endpoints": {
+      "mode": "allow",
+      "rules": [
+        { "methods": ["POST"], "path": "/v1/chat/completions" },
+        { "methods": ["POST"], "path": "/v1/embeddings" },
+        { "path": "/v1/models", "prefix": true }
+      ]
+    }
+  }
+}
+```
+
+Set it at runtime with no redeploy (the broker's policy cache reloads within
+`POLICY_CACHE_TTL_SECONDS`):
+
+```bash
+az appconfig kv set --name "<app-config-name>" --key 'tessera:broker:role-map' \
+  --value "$(cat role-map.json)" --yes
+```
+
+A malformed `endpoints` policy is rejected when the role map loads (early operator feedback) and is
+also treated as fully locked (deny-all) at request time, so a bad edit can never silently widen
+access. Tighten or loosen the list at any time; the change is effective on the next call.
+
+## 9. Break-glass (spec §8)
 
 If the broker is down or its managed identity loses Key Vault access:
 1. Verify the MI's `Key Vault Secrets User` assignment on the specific secrets (§5).

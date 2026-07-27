@@ -23,6 +23,7 @@ const genericOidcAuthority = require('./generic-oidc-authority');
 const { validateOidcAccessToken } = require('./oidc-identity-adapter');
 const { buildRouteTable, parseSecretCacheTtlSeconds } = require('./role-routing');
 const { runPreflight, safeLogLine } = require('./preflight');
+const { normalizeEndpointPolicy, evaluateEndpointPolicy } = require('./endpoint-policy');
 const { recordCall, captureRequestContent } = require('./api-call-audit');
 const { createRuntimePolicy } = require('./runtime-policy');
 const sdk = require('@tessera/build-sdk');
@@ -63,7 +64,7 @@ const runtimePolicy = createRuntimePolicy();
 // `entra` is intentionally secretless: the Function workload identity mints the token.
 function vendorForRole(role, roleMap = ROLE_TO_SECRET) {
   const entry = roleMap[role];
-  if (typeof entry === 'string') return { secret: entry, baseUrl: VENDOR_BASE_URL, inject: INJECT_MODE, enabled: true };
+  if (typeof entry === 'string') return { secret: entry, baseUrl: VENDOR_BASE_URL, inject: INJECT_MODE, enabled: true, endpoints: null };
   return {
     secret: entry.secret,
     enabled: entry.enabled !== false,
@@ -73,7 +74,21 @@ function vendorForRole(role, roleMap = ROLE_TO_SECRET) {
     scope: entry.scope,
     idField: entry.idField,
     secretField: entry.secretField,
+    // Optional per-endpoint lockdown. A malformed policy fails closed at request time (the
+    // connection is treated as fully locked), never as unrestricted.
+    endpoints: normalizeEndpointPolicyOrClosed(entry.endpoints),
   };
+}
+
+// Never let a malformed policy widen access: parse failure yields a sentinel that
+// evaluateEndpointPolicy treats as deny-all, not the null "unrestricted" policy.
+const MALFORMED_ENDPOINT_POLICY = Object.freeze({ malformed: true });
+function normalizeEndpointPolicyOrClosed(raw) {
+  try {
+    return normalizeEndpointPolicy(raw);
+  } catch {
+    return MALFORMED_ENDPOINT_POLICY;
+  }
 }
 
 // --- vendor-named routing ----------------------------------------------------------------------
@@ -344,6 +359,15 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
     const grantConnection = authority.connectionForRole(selectedRole, vendor);
     ctx.log(`[broker] grant connection=${grantConnection.id} grant=${grantResult.allowed ? 'allowed' : 'denied'}`);
     if (!grantResult.allowed) return { status: 403, jsonBody: { error: 'connection access denied' } };
+
+    // 1b. Per-endpoint lockdown. Evaluated after identity/grant checks but BEFORE quota and Key
+    //     Vault, so a locked-down path is rejected without spending KV throughput or a vendor call.
+    //     No policy on the connection = unrestricted (back-compat); a malformed policy fails closed.
+    const endpointDecision = evaluateEndpointPolicy(vendor.endpoints, { method: req.method, subpath });
+    if (!endpointDecision.allowed) {
+      ctx.log(`[broker] DENY oid=${oid} azp=${azp} role=${selectedRole} endpoint=${req.method} ${subpath || '/'} (${endpointDecision.reason}) (403)`);
+      return { status: 403, jsonBody: { error: 'endpoint not permitted for this connection' } };
+    }
 
     // 2. Enforce the distributed per-caller and per-key quota (spec §9) BEFORE touching Key Vault.
     //    Ordering matters: a caller flooding the broker would otherwise drive one Key Vault request
