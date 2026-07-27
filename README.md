@@ -264,7 +264,6 @@ called out so the local agent can grow without turning its core into Azure-only 
 | `observability/` | Alerts (4xx/5xx/latency/cold-start/KV-anomaly/cost), per-`oid` and per-key dashboards, access-review cadence. |
 | `admin-ui/` | Localhost-only admin console. |
 | `test/` | Test plan, acceptance matrix, rotation and rollout runbooks, token-claim assertion, smoke bars. |
-| `docs/ELI5.md` | Plain-language walkthrough of every layer, if you want the unhurried version. |
 | `docs/SYSADMIN-GUIDE.md` | Portal UI + `az` CLI deployment guide. |
 
 ## Placeholder convention

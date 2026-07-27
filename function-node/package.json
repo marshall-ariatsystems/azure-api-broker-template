@@ -1,6 +1,6 @@
 {
   "name": "broker-cxapi",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Minimal Entra-fronted vendor key broker (Node 22, Flex Consumption).",
   "main": "src/*.js",
   "engines": { "node": ">=22" },

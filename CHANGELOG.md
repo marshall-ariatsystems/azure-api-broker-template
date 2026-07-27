@@ -10,8 +10,8 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) structure.
 
 - Authenticated, route-specific broker preflight with a redacted correlation
   surface and zero vendor, Key Vault, quota, or OAuth side effects.
-- Tenant-neutral NinjaOne provider profile, deployment-chain validation, and
-  operator guidance.
+- Tenant-neutral provider profiles, deployment-chain validation, and operator
+  guidance.
 - Public retry, configuration, and preflight coverage for Node, Python, and
   .NET clients.
 - Immutable release-action and SBOM image pins, architecture checks, provenance,
@@ -29,7 +29,7 @@ and follows the [Keep a Changelog](https://keepachangelog.com/) structure.
 - Credential-shaped caller headers are rejected at shipped client boundaries.
 - Retired registration schema and renderer assets were removed.
 
-## 1.0.0 - 2026-07-26
+## 0.1.0 - 2026-07-26
 
 ### Added
 

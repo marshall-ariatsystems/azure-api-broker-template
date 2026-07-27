@@ -1,6 +1,6 @@
 {
   "name": "broker-client",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Vendor API client with NO vendor credentials — Entra auth to the key broker; the broker holds the credential and does any OAuth exchange server-side.",
   "type": "module",
   "main": "ninja-client.mjs",

@@ -42,6 +42,7 @@ Do not retag a published version. Cut a new patch release for any correction.
 
 ## Support policy
 
-The current major release line is supported. Security fixes are coordinated
-according to [SECURITY.md](SECURITY.md); deployments should upgrade to the most
-recent compatible patch release.
+The `0.x` line is a public preview: interfaces and release packaging may change
+between minor releases. Security fixes are coordinated according to
+[SECURITY.md](SECURITY.md); deployments should upgrade to the most recent
+compatible preview release.

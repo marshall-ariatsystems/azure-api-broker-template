@@ -8,8 +8,8 @@ do the same thing.
 > scoped roles listed in [Prerequisites](#prerequisites)) who can also create Entra app
 > registrations. No prior knowledge of this repo is assumed.
 >
-> **New to the *concept*?** Start with [`docs/ELI5.md`](ELI5.md), which explains *what* the broker
-> does. This guide is about *running* it.
+> **New to the concept?** Start with the repository [README](../README.md) for the architecture and
+> trust boundary. This guide is about deploying and operating it.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "broker-bridge",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Stateless loopback compatibility bridge for brokered vendor calls.",
   "type": "module",
   "main": "broker-bridge.mjs",

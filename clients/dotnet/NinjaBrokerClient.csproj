@@ -12,6 +12,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>KeyBroker.Client</RootNamespace>
     <AssemblyName>broker-client</AssemblyName>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

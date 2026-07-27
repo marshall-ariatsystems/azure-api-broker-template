@@ -36,13 +36,13 @@ if (!existsSync(binary)) {
   test('packaged binary reports its version', async () => {
     const home = await mkdtemp(join(tmpdir(), 'broker-bridge-home-'));
     const result = await execute(['--version'], { env: { HOME: home } });
-    assert.equal(result.code, 0); assert.equal(result.stdout, 'broker-bridge 1.0.0\n'); assert.equal(result.stderr, '');
+    assert.equal(result.code, 0); assert.equal(result.stdout, 'broker-bridge 0.1.0\n'); assert.equal(result.stderr, '');
   });
 
   test('packaged binary clean machine rejects offline input without persistence', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'broker-bridge-cwd-')); const home = await mkdtemp(join(tmpdir(), 'broker-bridge-home-')); const temp = await mkdtemp(join(tmpdir(), 'broker-bridge-tmp-'));
     const before = [snapshot(cwd), snapshot(home), snapshot(temp)]; const options = { cwd, env: { HOME: home, TMPDIR: temp } };
-    const version = await execute(['--version'], options); assert.equal(version.code, 0); assert.equal(version.stdout, 'broker-bridge 1.0.0\n');
+    const version = await execute(['--version'], options); assert.equal(version.code, 0); assert.equal(version.stdout, 'broker-bridge 0.1.0\n');
     const usage = await execute([], options); assert.equal(usage.code, 2); assert.match(usage.stderr, /Usage:/);
     const serve = await execute(['serve', '--broker', 'https://broker.invalid/discovery'], options); assert.equal(serve.code, 2); assert.match(serve.stderr, new RegExp(bootstrapMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     const run = await execute(['run', '--broker', 'https://broker.invalid/discovery', '--', 'does-not-exist-app'], options); assert.notEqual(run.code, 0); assert.match(run.stderr, new RegExp(bootstrapMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

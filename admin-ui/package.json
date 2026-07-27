@@ -1,6 +1,6 @@
 {
   "name": "broker-admin-ui",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Hosted same-origin administrator connections and access console.",
   "type": "module",
   "main": "server.mjs",
