@@ -1,0 +1,16 @@
+{
+  "name": "@tessera/build-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency-free contracts shared by Tessera build surfaces",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { BRIDGE_VERSION } from '../version.mjs';
+import { SUPPORTED_NODE_MAJOR } from '../src/supported-node.mjs';
 
 const bridgeDir = dirname(dirname(fileURLToPath(import.meta.url)));
 process.chdir(bridgeDir);
@@ -35,7 +36,7 @@ function recomputed() {
   requireArtifacts(); const files = [bundleFile, binaryFile]; const matches = scan(files); if (matches) throw new Error(`stateless scan matched ${matches} banned pattern(s)`);
   const rebuild = rebuildMatches(); if (!rebuild) throw new Error('stale dist — rerun npm run bundle');
   const sbom = JSON.parse(execFileSync('npm', ['sbom', '--sbom-format', 'cyclonedx', '--omit', 'dev'], { encoding: 'utf8' }));
-  return { artifacts: files.map(artifact), reproducible: { bundleRebuildSha256Match: rebuild }, statelessScan: { pattern, matches }, seaHost: { fusePresent: readFileSync(binaryFile).includes(Buffer.from(fuse)) }, sbom: { bomFormat: sbom.bomFormat, specVersion: sbom.specVersion } };
+  return { artifacts: files.map(artifact), reproducible: { bundleRebuildSha256Match: rebuild }, statelessScan: { pattern, matches }, seaHost: { fusePresent: readFileSync(binaryFile).includes(Buffer.from(fuse)) }, sbom: { bomFormat: sbom.bomFormat, specVersion: sbom.specVersion }, supportedNodeMajor: SUPPORTED_NODE_MAJOR };
 }
 
 try {
@@ -46,6 +47,7 @@ try {
     compare('ed', 'ED-V007-002', recorded.ed); compare('version', BRIDGE_VERSION, recorded.version); compare('platform', `${process.platform}-${process.arch}`, recorded.platform);
     for (const key of ['artifacts', 'reproducible', 'statelessScan', 'seaHost']) compare(key, recorded[key], current[key]);
     compare('sbom.bomFormat', recorded.sbom?.bomFormat, current.sbom.bomFormat); compare('sbom.specVersion', recorded.sbom?.specVersion, current.sbom.specVersion);
+    compare('supportedNodeMajor', recorded.supportedNodeMajor, current.supportedNodeMajor);
     compare('deferred.items', deferred.map(({ item }) => item), recorded.deferred?.map(({ item }) => item));
     console.log(evidenceFile);
   } else {

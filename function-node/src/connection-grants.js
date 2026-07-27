@@ -19,7 +19,7 @@ function exactKeys(value, allowed, message) {
   rejectUnknownKeys(value, allowed, () => fail(message));
 }
 function string(value, prefix, message) {
-  if (typeof value !== 'string' || !value || value.length > MAX_STRING_LENGTH || !value.startsWith(prefix) || value.includes('*')) fail(message);
+  if (typeof value !== 'string' || value.length <= prefix.length || value.length > MAX_STRING_LENGTH || !value.startsWith(prefix) || value.includes('*')) fail(message);
   return value;
 }
 function grantList(value, prefix, name) {
@@ -66,7 +66,9 @@ function normalizeGrantIdentity(input) {
   exactKeys(input, IDENTITY_KEYS, 'grant identity contains an unknown field');
   const subject = string(input.subject, input.subject && input.subject.startsWith('workload:') ? 'workload:' : 'user:', 'grant subject is invalid');
   const result = { subject };
-  if (OWN.call(input, 'groups')) result.groups = grantList(input.groups, 'group:', 'groups');
+  // An empty identity claim means "no groups", unlike an empty operator grant list,
+  // which remains malformed in parseConnectionGrants.
+  if (OWN.call(input, 'groups') && (!Array.isArray(input.groups) || input.groups.length > 0)) result.groups = grantList(input.groups, 'group:', 'groups');
   if (OWN.call(input, 'workload')) result.workload = string(input.workload, 'workload:', 'workload is invalid');
   return Object.freeze(result);
 }

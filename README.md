@@ -28,6 +28,7 @@
 - [Call it](#call-it)
 - [Run an existing app through the bridge](#run-an-existing-app-through-the-bridge)
 - [Onboard a vendor](#onboard-a-vendor)
+- [Release artifacts](#release-artifacts)
 - [Product direction and repository layout](#product-direction-and-repository-layout)
 - [Placeholder convention](#placeholder-convention)
 - [Verify](#verify)
@@ -105,7 +106,10 @@ vendor you were not assigned still returns 403.
 
 ## Supported runtime
 
-The **Node.js broker** (`function-node/`) is the only supported production runtime. A .NET implementation previously existed as a behavior-matched twin but has been retired; tooling, IaC, and documentation have been aligned to Node only. This choice concentrates maintenance effort and ensures IaC, deployment runbooks, and operational guidance stay consistent.
+The **Node.js broker** (`function-node/`) is the only supported production broker runtime. The
+separate .NET project under `clients/dotnet/` is a supported caller client, released as a
+self-contained executable; it is not an alternate broker implementation. This keeps the
+production control plane singular while retaining practical clients for common calling environments.
 
 ## Deploy it
 
@@ -127,19 +131,21 @@ Template owns code and mechanism; your instance repo owns identity, branding, an
 
 ## Call it
 
-Clients need two non-sensitive values, `BROKER_BASE` and `BROKER_SCOPE`. No vendor credential ever
-reaches a client.
+Native clients need two non-sensitive values, `BROKER_BASE` and `BROKER_SCOPE`. `BROKER_BASE` is
+the broker route root, including `/api/broker`; no vendor credential ever reaches a client.
 
 ```bash
-# Bash — token from your own az login, then call through the broker
-export BROKER_BASE=https://broker.contoso.com
+# Python — authenticate with your own az login, then call through the broker
+export BROKER_BASE=https://broker.contoso.com/api/broker
 export BROKER_SCOPE="api://<brokerClientId>/.default"
-bash clients/call-broker.sh /v2/organizations
+python3 -c 'from clients.broker_client import get; print(get("/v2/organizations").json())'
 ```
 
 ```python
-from broker_client import BrokerClient
-orgs = BrokerClient().get("/v2/organizations")   # no key anywhere
+from clients.broker_client import get, preflight
+
+assert preflight("<vendor-route>")[0] == 200
+orgs = get("/v2/organizations")  # no key anywhere
 ```
 
 Ready-made clients:
@@ -215,6 +221,19 @@ Grant and revoke afterwards: [`identity/grant-revoke-runbook.md`](identity/grant
 Prefer clicking? [`admin-ui/`](admin-ui/) is a localhost-only console that loads vendor keys
 (write-only) and assigns roles using your own `az login` identity. It stores nothing.
 
+## Release artifacts
+
+Published releases are immutable, checksummed, software-bill-of-materials-backed artifacts:
+
+- **`bridge-v*`** publishes the stateless `broker-bridge` executable for Linux x64, macOS arm64,
+  and Windows x64.
+- **`client-v*`** publishes the self-contained `broker-client` executable archives for the same
+  platforms.
+
+Each release includes `SHA256SUMS`, a CycloneDX SBOM, GitHub build provenance, and the applicable
+operator README and Apache-2.0 license. Verify the checksum before execution. The exact artifact
+layout, installation, and maintainer release procedure are in [RELEASE.md](RELEASE.md).
+
 ## Product direction and repository layout
 
 This repository is still a working Azure reference implementation. The product boundary is now
@@ -265,7 +284,13 @@ GUIDs in this repo are placeholders, substituted at deploy time and grep-findabl
 bash test/run-smoke-bars.sh
 
 # Broker behavioral tests (mocked Azure SDK, real handler)
-node function-node/test/oauth-recovery.test.js
+npm test --prefix function-node
+
+# Release-relevant client and bridge checks
+npm test --prefix clients/bridge
+node --test clients/node/test/*.test.mjs
+python3 -m unittest clients.test_broker_config clients.test_broker_preflight clients.test_broker_client_integration
+dotnet build clients/dotnet/NinjaBrokerClient.csproj --no-restore --nologo -v q
 ```
 
 Bar-by-bar evidence is in [`test/results.md`](test/results.md); the parity matrix is

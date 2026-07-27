@@ -18,4 +18,6 @@ Use `--preset openai`, `anthropic`, or `generic`; `--set NAME=VALUE` is limited 
 
 Build a local distributable with `npm run bundle && npm run package`. SEA packaging requires an official fuse-bearing Node host; on systems using a shared-libnode build, set `NODE_SEA_BINARY=/path/to/official/node` (RD-001 gap 4).
 
+The bridge and its SEA artifact require Node 24, the release build runtime; older Node majors are not supported.
+
 Verify a downloaded release against its `SHA256SUMS`. Generate local artifact evidence with `node scripts/release-evidence.mjs`; it writes `_directives/ED/ED-V007-002-artifact-evidence.json`. Signing, provenance attestation, and multi-platform publication happen in the `bridge-v*` tag pipeline (`.github/workflows/release-bridge.yml`). The artifact stores no credential or product state, and none is needed to verify it.

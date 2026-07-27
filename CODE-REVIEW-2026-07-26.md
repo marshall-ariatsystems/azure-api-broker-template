@@ -152,6 +152,22 @@ Built green by the vertical executor on 2026-07-26 and fixture-proven by design;
 
 Items 2–4 map naturally onto the integration EDs the verticals already anticipate.
 
+## 8. Remediation build specs
+
+### NinjaOne integration path
+
+The operational assessment of `docs/ninjaone-integration-frictions.md` found that its core
+frictions remain valid after the current build, with four material gaps: connection grants are
+not represented in the role-to-route explanation; Entra-only scope guidance is presented as
+universal despite generic/public OIDC modes; clients lack a safe authenticated preflight and
+broker-generated correlation ID; and Python ships deployment topology defaults.
+
+The implementation-ready remediation scope, acceptance criteria, and delivery order are in
+[NinjaOne integration remediation build spec](spec/ninjaone-integration-remediation-build-spec.md).
+It addresses C2, H1/H4/H9, the OIDC-mode distinctions behind H5, and the client-side rate-limit
+and configuration gaps without exposing a vendor credential or introducing tenant-specific
+configuration into source.
+
 ---
 
 *Reviewers: four independent read-only agents (function-node; clients/bridge; admin-ui/tools/IaC/providers; cross-cutting export graph & contracts), synthesized and contradiction-checked 2026-07-26. Severity totals: 2 CRITICAL / 13 HIGH / 12 MEDIUM / 10 LOW.*

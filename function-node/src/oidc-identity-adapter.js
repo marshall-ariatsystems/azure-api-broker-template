@@ -9,7 +9,7 @@ async function json(fetchImpl, value) { if (!httpsOrTestLoopback(value)) throw e
 async function keysFor(jwksUri, fetchImpl, refresh = false) {
   const current = jwkCache.get(jwksUri); if (!refresh && current?.expiresAt > Date.now()) return current.keys;
   const response = await fetchImpl(jwksUri, { redirect: 'error' }); if (!response?.ok) throw error(); let body; try { body = await response.json(); } catch { throw error(); }
-  const maxAge = /max-age=(\d+)/i.exec(response.headers?.get?.('cache-control') || '')?.[1]; const ttl = Math.min(3_600_000, (Number(maxAge) || 300) * 1000);
+  const match = /max-age=(\d+)/i.exec(response.headers?.get?.('cache-control') || ''); const seconds = match ? Number(match[1]) : 300; const ttl = Math.min(3_600_000, seconds * 1000);
   if (!Array.isArray(body?.keys)) throw error(); jwkCache.set(jwksUri, { keys: body.keys, expiresAt: Date.now() + ttl }); return body.keys;
 }
 function normalizeOidcClaims(payload, mapping = {}) {
@@ -23,13 +23,13 @@ function normalizeOidcClaims(payload, mapping = {}) {
 async function validateOidcAccessToken({ token, config, fetchImpl = fetch }) {
   if (typeof token !== 'string' || !config || typeof config.issuer !== 'string' || !config.audience) throw error();
   const parts = token.split('.'); if (parts.length !== 3) throw error(); const header = b64json(parts[0]); const payload = b64json(parts[1]);
-  if (!['RS256', 'ES256'].includes(header.alg) || typeof header.kid !== 'string') throw error();
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string') throw error();
   const issuer = config.issuer.replace(/\/$/, ''); const discovery = await json(fetchImpl, `${issuer}/.well-known/openid-configuration`);
   if (discovery.issuer !== issuer || typeof discovery.jwks_uri !== 'string') throw error();
   let keys = await keysFor(discovery.jwks_uri, fetchImpl); let jwk = keys.find((item) => item.kid === header.kid);
   if (!jwk) { keys = await keysFor(discovery.jwks_uri, fetchImpl, true); jwk = keys.find((item) => item.kid === header.kid); }
   if (!jwk) throw error(); let key; try { key = crypto.createPublicKey({ key: jwk, format: 'jwk' }); } catch { throw error(); }
-  const algorithm = header.alg === 'RS256' ? 'RSA-SHA256' : 'sha256'; if (!crypto.verify(algorithm, Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url'))) throw error();
+  if (!crypto.verify('RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url'))) throw error();
   const now = Math.floor(Date.now() / 1000); const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (payload.iss !== issuer || !audiences.includes(config.audience) || !Number.isInteger(payload.exp) || payload.exp <= now || (payload.nbf !== undefined && (!Number.isInteger(payload.nbf) || payload.nbf > now))) throw error();
   if (config.requiredAcr && payload[config.mapping?.acr || 'acr'] !== config.requiredAcr) throw error();

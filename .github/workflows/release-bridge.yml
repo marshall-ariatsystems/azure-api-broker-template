@@ -21,17 +21,18 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
             executable: broker-bridge
-          - os: macos-latest
+          - os: macos-14
             rid: osx-arm64
             executable: broker-bridge
+            expected_arch: arm64
           - os: windows-latest
             rid: win-x64
             executable: broker-bridge.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
           cache: npm
@@ -73,6 +74,14 @@ jobs:
         working-directory: clients/bridge
         run: npm run package
 
+      - name: Assert packaged architecture
+        if: matrix.expected_arch
+        shell: bash
+        working-directory: clients/bridge
+        run: |
+          set -euo pipefail
+          file dist/broker-bridge | grep -Eiq "${{ matrix.expected_arch }}|arm64e"
+
       - name: Smoke test packaged bridge
         shell: bash
         working-directory: clients/bridge
@@ -108,7 +117,7 @@ jobs:
           fi
           mv "dist/broker-bridge${extension}" "dist/broker-bridge-${version}-${{ matrix.rid }}${extension}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: broker-bridge-${{ matrix.rid }}
           path: clients/bridge/dist/broker-bridge-*-${{ matrix.rid }}*
@@ -117,16 +126,16 @@ jobs:
   release:
     name: attest and publish
     if: github.event_name == 'push'
-    needs: build
+    needs: [build, verify-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       attestations: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: dist
           merge-multiple: true
@@ -135,12 +144,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cp LICENSE dist/broker-bridge-LICENSE.txt
+          cp clients/bridge/README.md dist/broker-bridge-README.md
           (cd dist && sha256sum broker-bridge-* > SHA256SUMS)
           (cd clients/bridge && npm ci --omit dev --ignore-scripts >/dev/null)
           (cd clients/bridge && npm sbom --sbom-format cyclonedx --omit dev) > dist/broker-bridge.cdx.json
 
       - name: Generate build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35 # v4
         with:
           subject-path: 'dist/broker-bridge-*'
 
@@ -150,3 +161,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" dist/* --generate-notes --title "Broker bridge $TAG"
+
+  verify-integration:
+    name: release integration verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            clients/bridge/package-lock.json
+            function-node/package-lock.json
+      - name: Install and test bridge and Function surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix clients/bridge
+          npm ci --prefix function-node
+          npm test --prefix clients/bridge
+          npm test --prefix function-node
+      - name: Test Node and Python client integration surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test clients/node/test/*.test.mjs
+          python3 -m unittest clients.test_broker_config clients.test_broker_preflight clients.test_broker_client_integration

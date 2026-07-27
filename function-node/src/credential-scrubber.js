@@ -8,12 +8,11 @@
 // Credential-shaped fields are always rejected (not silently dropped) to surface smuggling attempts
 // and ensure logging clarity.
 
-const CREDENTIAL_SHAPED_NAMES = new Set([
-  'x-api-key', 'api-key', 'apikey', 'api_key', 'authorization',
-  'key', 'access_token', 'token', 'subscription-key',
-  'x-api-key-id', 'x-api-secret', 'x-key-id', 'x-secret',
-  'client_id', 'client_secret', // oauth2cc pair fields
-]);
+const sdk = require('../../sdk');
+
+// The shared set is the canonical base. This local copy is only extended with
+// deployment-configured injection names at startup.
+const CREDENTIAL_SHAPED_NAMES = new Set(sdk.CREDENTIAL_HEADER_NAMES);
 
 // Bodies and query strings are API data, not credential headers. `key`, `token`, and `client_id`
 // are common pagination, lookup, and payload field names, so rejecting them breaks ordinary SDK
@@ -171,6 +170,11 @@ function filterRequestHeaders(incomingHeaders, injectionHeaderNames = []) {
     // legitimate request: strip them silently so they never reach the vendor. Rejecting here would
     // 400 all real traffic. Checked BEFORE the credential test because `authorization` is in both.
     if (isAlwaysStripped(lk)) continue;
+
+    // Connection-scoped headers, including proxy credentials, must never be
+    // forwarded. They are platform/proxy residue rather than caller vendor
+    // credential attempts, so retain the broker's silent-strip behavior.
+    if (sdk.HOP_BY_HOP_HEADER_NAMES.has(lk)) continue;
 
     // Reject genuinely smuggled credentials (x-api-key, api_key, the deployment-configured injection
     // header names, …). These have no legitimate reason to appear on a caller request, so surfacing

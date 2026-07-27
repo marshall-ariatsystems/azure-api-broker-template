@@ -5,6 +5,8 @@ import { brokerRequestHeaders, HOP_BY_HOP_HEADERS } from './request-policy.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { login as publicOidcLogin } from './public-oidc.mjs';
 import { clearSession, getAccessToken } from './session.mjs';
+import { isCliEntry } from './src/entry-semantics.mjs';
+import { pathToFileURL } from 'node:url';
 
 const LOGIN_REQUIRED = 'login required; run broker-bridge login';
 const MAX_DISCOVERY_BYTES = 64 * 1024;
@@ -126,7 +128,9 @@ export async function main(argv = process.argv.slice(2), { createSessionAdapter 
   catch (error) { console.error(`broker-bridge serve failed: ${error.message}`); return 2; }
 }
 
-const invokedHref = process.argv[1] ? new URL(`file://${process.argv[1]}`).href : undefined;
-if (!import.meta.url || invokedHref === import.meta.url) main().then((code) => { if (code !== undefined) process.exit(code); }).catch((error) => { console.error(error.message); process.exit(1); });
+const cjsRequire = typeof require !== 'undefined' ? require : undefined;
+const cjsModule = typeof module !== 'undefined' ? module : undefined;
+const invokedHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
+if (isCliEntry({ require: cjsRequire, module: cjsModule, metaUrl: import.meta.url, argvHref: invokedHref })) main().then((code) => { if (code !== undefined) process.exit(code); }).catch((error) => { console.error(error.message); process.exit(1); });
 
 export { LOGIN_REQUIRED, MAX_DISCOVERY_BYTES };

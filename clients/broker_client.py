@@ -1,97 +1,106 @@
+"""Python client for calling vendor APIs through an explicitly configured broker.
+
+Configuration is required at call time:
+
+  BROKER_HOST   broker hostname, or use BROKER_BASE instead
+  BROKER_BASE   e.g. https://<function-app>.azurewebsites.net
+  BROKER_SCOPE  e.g. api://<broker-app-id>/.default
+  BROKER_IP     optional address to use for invocation-scoped DNS pinning
+
+The real vendor key remains in the broker. Callers authenticate with Microsoft Entra;
+the broker selects and injects vendor credentials server-side.
+
+Requires: pip install azure-identity requests (plus openai httpx for broker_openai()).
 """
-cxkey broker client (Python) — turnkey, proxy model. The real vendor key NEVER leaves Azure.
 
-Two one-line drop-ins:
-
-  # LLM / OpenRouter (any OpenAI-compatible vendor):
-  from broker_client import broker_openai
-  client = broker_openai()                     # <-- the only line you change
-  client.chat.completions.create(model="openai/gpt-4o-mini", messages=[...])
-
-  # Any REST vendor (e.g. Salesforce):
-  from broker_client import get, post
-  r = get("/api/broker/v2/organizations")      # Entra-authed, key injected by the broker
-
-How the proxy works: your request goes to the BROKER, carrying YOUR Microsoft Entra token in
-Authorization (auto-acquired + auto-refreshed here). Azure Easy Auth validates it, then the broker
-strips your token, selects the right vendor key from Key Vault by your app role, injects it
-server-side, and forwards to the vendor. You never possess the vendor key.
-
-The broker is private-only. This module pins the broker FQDN -> its private IP at the socket layer
-(the code equivalent of `curl --resolve FQDN:443:10.0.0.10`), so it works regardless of the
-caller's DNS/VPN state; TLS SNI and the Host header stay the FQDN, so the cert validates normally.
-The pin is applied process-wide, so it also covers the OpenAI SDK (httpx), not just `requests`.
-
-Config (env vars, all optional):
-  BROKER_HOST   broker hostname (default: the cxkey broker FQDN)
-  BROKER_IP     private endpoint IP to pin to (default: 10.0.0.10).
-                Set to "" (empty) to use normal DNS instead — for on-prem/fixed-DNS callers,
-                or once VPN DNS is fixed. No code change.
-  BROKER_SCOPE  Entra scope (default: api://<appId>/.default)
-
-Identity: DefaultAzureCredential — works with `az login`, a managed identity, or an env-var
-service principal (AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_CLIENT_SECRET), no code change. That
-identity must (a) hold a VendorApi.Key* app role and (b) have its client app-id in the broker's
-Easy Auth allowedApplications.
-
-Requires: pip install azure-identity requests   (plus  openai httpx  for broker_openai())
-"""
 import os
-import socket
+import time
+import random
+from collections.abc import Mapping
 
 import requests
 from azure.identity import DefaultAzureCredential
 
-BROKER_HOST = os.getenv(
-    "BROKER_HOST", "func-broker-cxapi-csb2cscrdcdka3fy.centralus-01.azurewebsites.net"
-)
-BROKER_IP = os.getenv("BROKER_IP", "10.0.0.10")
-BROKER_SCOPE = os.getenv(
-    "BROKER_SCOPE", "api://ce485d55-f7af-40a8-b9d3-12dd64252740/.default"
-)
-BROKER_BASE = f"https://{BROKER_HOST}"          # requests helpers take full paths ("/api/broker/...")
-BROKER_API = f"{BROKER_BASE}/api/broker"         # SDK base_url; vendor subpaths append here
+try:  # Supports both ``import clients.broker_client`` and running from clients/.
+    from .broker_config import BrokerConfigError, load_broker_config, pin_dns
+except ImportError:
+    from broker_config import BrokerConfigError, load_broker_config, pin_dns
 
-# --- pin FQDN -> private IP process-wide (covers requests AND httpx/openai) ----
-# Patching socket.getaddrinfo is the universal `--resolve`: every library that resolves
-# BROKER_HOST gets BROKER_IP, while the hostname string (hence TLS SNI + cert check) is untouched.
-if BROKER_IP:
-    _orig_getaddrinfo = socket.getaddrinfo
 
-    def _pinned_getaddrinfo(host, *args, **kwargs):
-        if host == BROKER_HOST:
-            host = BROKER_IP
-        return _orig_getaddrinfo(host, *args, **kwargs)
-
-    socket.getaddrinfo = _pinned_getaddrinfo
-
-# One credential for the process. In dev this uses the Azure CLI login; in prod a managed
-# identity / service principal with a direct app-role assignment. azure-identity caches and
-# auto-refreshes the token internally, so get_token() per request is cheap.
+# One credential for the process. azure-identity caches and refreshes tokens internally.
 _credential = DefaultAzureCredential()
-
-
-def get_token() -> str:
-    """Acquire a bearer token for the broker's audience."""
-    return _credential.get_token(BROKER_SCOPE).token
-
-
-# --- generic REST helpers (Salesforce and any other HTTP vendor) ----------------
-# Persistent session -> HTTP keep-alive, so repeated calls reuse the TLS connection instead of
-# paying a fresh handshake (~230 ms) every time. Cuts per-call broker overhead to ~70-100 ms.
 _session = requests.Session()
+
+_CREDENTIAL_HEADERS = frozenset({
+    "authorization", "proxy-authorization", "x-api-key", "api-key", "apikey", "api_key",
+    "key", "access_token", "token", "subscription-key", "x-api-key-id", "x-api-secret",
+    "x-key-id", "x-secret", "client_id", "client_secret",
+})
+_MAX_READ_RETRIES = 2
+_JITTER_CEILING_SECONDS = 0.25
+
+
+def get_token(config=None) -> str:
+    """Acquire a bearer token for the explicitly configured broker audience."""
+    cfg = config or load_broker_config(os.environ)
+    return _credential.get_token(cfg.scope).token
+
+
+def _caller_headers(headers) -> dict:
+    if headers is None:
+        return {}
+    if not isinstance(headers, Mapping):
+        raise TypeError("headers must be a mapping")
+    result = dict(headers)
+    for name in result:
+        if str(name).lower() in _CREDENTIAL_HEADERS:
+            raise BrokerConfigError(f"credential-shaped caller header is not allowed: {name}")
+    return result
+
+
+def _retry_after_seconds(response) -> float:
+    value = response.headers.get("Retry-After", "1").strip()
+    return float(value) if value.isdigit() else 1.0
 
 
 def call(method: str, path: str, **kwargs) -> requests.Response:
-    """Call the broker at <path> with an Entra bearer token injected (keep-alive)."""
-    headers = {"Authorization": f"Bearer {get_token()}"}
-    headers.update(kwargs.pop("headers", {}))
+    """Call the broker at *path* with an Entra bearer token injected.
+
+    GET and HEAD use at most two bounded, Retry-After-led retries. Writes are sent once.
+    """
+    cfg = load_broker_config(os.environ)
+    headers = _caller_headers(kwargs.pop("headers", None))
+    headers["Authorization"] = f"Bearer {get_token(cfg)}"
+    max_retries = kwargs.pop("max_retries", _MAX_READ_RETRIES)
+    if not isinstance(max_retries, int):
+        raise TypeError("max_retries must be an integer")
+    max_retries = max(0, min(max_retries, _MAX_READ_RETRIES))
+    timeout = kwargs.pop("timeout", 30)
     if not path.startswith("/"):
         path = "/" + path
-    return _session.request(
-        method, f"{BROKER_BASE}{path}", headers=headers,
-        timeout=kwargs.pop("timeout", 30), **kwargs,
-    )
+    with pin_dns(cfg):
+        for attempt in range(max_retries + 1):
+            response = _session.request(
+                method,
+                f"{cfg.base_url}{path}",
+                headers=headers,
+                timeout=timeout,
+                **kwargs,
+            )
+            if response.status_code != 429 or method.upper() not in {"GET", "HEAD"} or attempt == max_retries:
+                return response
+            time.sleep(_retry_after_seconds(response) + random.uniform(0, _JITTER_CEILING_SECONDS))
+
+
+def preflight(route_slug: str) -> tuple[int, str | None]:
+    """Run the authenticated no-side-effect broker authorization preflight."""
+    if not isinstance(route_slug, str) or not route_slug or not all(char.islower() or char.isdigit() or char == "-" for char in route_slug):
+        raise BrokerConfigError("route_slug must be a lowercase route slug")
+    cfg = load_broker_config(os.environ)
+    headers = {"Authorization": f"Bearer {get_token(cfg)}", "Accept": "application/json"}
+    with pin_dns(cfg):
+        response = _session.request("GET", f"{cfg.base_url}/preflight/{route_slug}", headers=headers, timeout=30)
+    return response.status_code, response.headers.get("x-correlation-id")
 
 
 def get(path, **kw):
@@ -110,23 +119,34 @@ def delete(path, **kw):
     return call("DELETE", path, **kw)
 
 
-# --- one-line OpenAI-SDK factory (OpenRouter / any OpenAI-compatible vendor) ---
 def broker_openai(**openai_kwargs):
-    """Return an OpenAI-SDK client pointed at the broker. Drop-in for:
-        client = OpenAI(api_key=..., base_url="https://openrouter.ai/api/v1")
-    The api_key is a placeholder — the broker injects the real key in Azure; an httpx auth hook
-    overwrites Authorization with a fresh Entra token per request (auto-refresh)."""
+    """Return an OpenAI-SDK client configured to send requests through the broker."""
     import httpx  # lazy: only LLM callers need httpx/openai
     from openai import OpenAI
 
+    cfg = load_broker_config(os.environ)
+    if "default_headers" in openai_kwargs:
+        _caller_headers(openai_kwargs["default_headers"])
+
     class _EntraAuth(httpx.Auth):
         def auth_flow(self, request):
-            request.headers["Authorization"] = f"Bearer {get_token()}"
+            request.headers["Authorization"] = f"Bearer {get_token(cfg)}"
             yield request
 
+    class _PinnedTransport(httpx.BaseTransport):
+        def __init__(self):
+            self._transport = httpx.HTTPTransport()
+
+        def handle_request(self, request):
+            with pin_dns(cfg):
+                return self._transport.handle_request(request)
+
+        def close(self):
+            self._transport.close()
+
     return OpenAI(
-        base_url=BROKER_API,
-        api_key="broker-managed",  # never used; real key injected server-side
-        http_client=httpx.Client(auth=_EntraAuth(), timeout=60.0),
+        base_url=f"{cfg.base_url}/api/broker",
+        api_key="broker-managed",  # never used; the broker injects the real key server-side
+        http_client=httpx.Client(auth=_EntraAuth(), transport=_PinnedTransport(), timeout=60.0),
         **openai_kwargs,
     )

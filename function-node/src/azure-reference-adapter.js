@@ -1,17 +1,13 @@
 // azure-reference-adapter.js — compatibility authority for the Azure role map.
 
 const { createConnection } = require('./hosted-authority');
-
-function slugForRole(role, entry) {
-  if (entry && typeof entry === 'object' && entry.route) return String(entry.route).toLowerCase();
-  const match = /^VendorApi\.(.+)\.Invoke$/i.exec(role);
-  return (match ? match[1] : role).toLowerCase();
-}
+const { buildRouteTable, connectionIdForRole } = require('./role-routing');
 
 function createAzureReferenceAdapter(roleMap) {
   const entries = Object.freeze(Object.entries(roleMap || {}));
-  const rolesByConnectionId = new Map(entries.map(([role, entry]) => [`azure:${slugForRole(role, entry)}`, role]));
-  const connectionIds = Object.freeze([...rolesByConnectionId.keys()]);
+  const routeTable = buildRouteTable(roleMap || {});
+  const rolesByConnectionId = new Map(entries.map(([role, entry]) => [connectionIdForRole(role, entry), role]));
+  const connectionIds = routeTable.connectionIds;
   const policy = Object.freeze({
     allows(identity, connection) {
       const role = rolesByConnectionId.get(connection.id);
@@ -23,7 +19,7 @@ function createAzureReferenceAdapter(roleMap) {
     const entry = Object.prototype.hasOwnProperty.call(roleMap || {}, role) ? roleMap[role] : undefined;
     if (!entry || !vendor) throw new TypeError('known role and vendor are required');
     return createConnection({
-      id: `azure:${slugForRole(role, entry)}`,
+      id: connectionIdForRole(role, entry),
       provider: 'azure-reference',
       baseUrl: String(vendor.baseUrl || '').replace(/\/+$/, ''),
       injection: String(vendor.inject || ''),

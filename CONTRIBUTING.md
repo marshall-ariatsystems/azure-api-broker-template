@@ -32,7 +32,7 @@ credential, in any form, will be declined.
 
 ```bash
 git clone <your-fork>
-cd azure-key-broker
+cd tessera-api-broker
 
 # Node broker
 cd function-node && npm install && cd ..
@@ -48,7 +48,13 @@ provisions live resources.
 
 ```bash
 # Broker behavioral tests (mocked Azure SDK, real handler)
-node function-node/test/oauth-recovery.test.js
+npm test --prefix function-node
+
+# Bridge and released client surfaces
+npm test --prefix clients/bridge
+node --test clients/node/test/*.test.mjs
+python3 -m unittest clients.test_broker_config clients.test_broker_preflight clients.test_broker_client_integration
+dotnet build clients/dotnet/NinjaBrokerClient.csproj --no-restore --nologo -v q
 
 # Gate verifier — artifact + negative-match scans, no Azure creds
 bash test/run-smoke-bars.sh
@@ -99,7 +105,7 @@ In the PR description, state:
 
 1. What changed and why.
 2. The spec section it implements or corrects.
-3. Whether both broker implementations were updated (or why only one needed it).
+3. Whether the Node broker, bridge, or a shipped client surface was updated (or why it was not).
 4. That `bash test/run-smoke-bars.sh` passes.
 
 Run `git diff --cached` before you commit and confirm no key, real GUID, real hostname, or build

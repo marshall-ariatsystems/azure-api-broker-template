@@ -1,18 +1,13 @@
-// These are caller-controlled credential delivery headers.  The local bridge
-// authenticates itself to the broker and must never relay a client credential.
-const CREDENTIAL_HEADERS = new Set([
-  'authorization', 'x-api-key', 'api-key', 'apikey', 'api_key',
-  'subscription-key', 'access_token', 'token',
-]);
-const HOP_BY_HOP_HEADERS = new Set([
-  'host', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'content-length',
-]);
+import sdk from '../../sdk/index.js';
+
+// The local bridge authenticates itself to the broker and must never relay a
+// client credential. These aliases preserve the public module surface while
+// sourcing membership from the shared SDK policy.
+const CREDENTIAL_HEADERS = sdk.CREDENTIAL_HEADER_NAMES;
+const HOP_BY_HOP_HEADERS = sdk.HOP_BY_HOP_HEADER_NAMES;
 
 export function isBlockedRequestHeader(name) {
-  const normalized = name.toLowerCase();
-  return HOP_BY_HOP_HEADERS.has(normalized) ||
-    CREDENTIAL_HEADERS.has(normalized) ||
-    normalized.startsWith('x-ms-');
+  return sdk.isBlockedRequestHeader(name);
 }
 
 export function brokerRequestHeaders(headers, brokerToken) {

@@ -25,19 +25,20 @@ namespace KeyBroker.Client;
 
 public sealed class NinjaBrokerClient
 {
-    // Broker base + scope from BROKER_BASE / BROKER_SCOPE env vars (both required).
-    private static readonly string BrokerBase =
-        (Environment.GetEnvironmentVariable("BROKER_BASE")
-         ?? throw new InvalidOperationException(
-             "BROKER_BASE env var is required, e.g. https://<function-app>.azurewebsites.net/api/broker")).TrimEnd('/');
-    private static readonly string BrokerScope =
-        Environment.GetEnvironmentVariable("BROKER_SCOPE")
-        ?? throw new InvalidOperationException(
-            "BROKER_SCOPE env var is required, e.g. api://<broker-client-id>/.default");
-
-    private static readonly HttpClient Http = new();
+    private readonly string _brokerBase;
+    private readonly string _brokerScope;
+    private readonly HttpClient _http;
     private readonly TokenCredential _credential = new DefaultAzureCredential();
     private AccessToken _cached;
+
+    /// <summary>Create a client using the shared, HTTPS-only broker configuration validator.</summary>
+    public NinjaBrokerClient(HttpClient? httpClient = null, IDictionary<string, string?>? env = null)
+    {
+        var config = BrokerPreflight.LoadConfig(env);
+        _brokerBase = config.Base;
+        _brokerScope = config.Scope;
+        _http = httpClient ?? new HttpClient();
+    }
 
     private async Task<string> GetEntraTokenAsync(CancellationToken ct)
     {
@@ -45,7 +46,7 @@ public sealed class NinjaBrokerClient
         if (_cached.Token is not null && _cached.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(2))
             return _cached.Token;
         _cached = await _credential.GetTokenAsync(
-            new TokenRequestContext(new[] { BrokerScope }), ct);
+            new TokenRequestContext(new[] { _brokerScope }), ct);
         return _cached.Token;
     }
 
@@ -53,18 +54,43 @@ public sealed class NinjaBrokerClient
     public async Task<string> CallAsync(
         string path, HttpMethod? method = null, string? jsonBody = null, CancellationToken ct = default)
     {
-        var uri = $"{BrokerBase}{(path.StartsWith('/') ? path : "/" + path)}";
-        using var req = new HttpRequestMessage(method ?? HttpMethod.Get, uri);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetEntraTokenAsync(ct));
-        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        if (jsonBody is not null)
-            req.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
-
-        using var resp = await Http.SendAsync(req, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new HttpRequestException($"broker {(int)resp.StatusCode} for {path}: {body}");
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("path is required", nameof(path));
+        var requestMethod = method ?? HttpMethod.Get;
+        var uri = $"{_brokerBase}{(path.StartsWith('/') ? path : "/" + path)}";
+        HttpResponseMessage? resp = null;
+        for (var attempt = 0; attempt <= 2; attempt++)
+        {
+            using var req = new HttpRequestMessage(requestMethod, uri);
+            // Authentication is client-owned; callers cannot provide or override this header.
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetEntraTokenAsync(ct));
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            if (jsonBody is not null)
+                req.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
+            resp = await _http.SendAsync(req, ct);
+            if (resp.StatusCode != System.Net.HttpStatusCode.TooManyRequests ||
+                (requestMethod != HttpMethod.Get && requestMethod != HttpMethod.Head) || attempt == 2)
+                break;
+            var retryAfter = resp.Headers.RetryAfter?.Delta?.TotalMilliseconds ?? 1000;
+            var boundedJitter = Random.Shared.Next(0, 251);
+            resp.Dispose();
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, retryAfter) + boundedJitter), ct);
+        }
+        using var finalResponse = resp ?? throw new InvalidOperationException("broker did not return a response");
+        var body = await finalResponse.Content.ReadAsStringAsync(ct);
+        if (!finalResponse.IsSuccessStatusCode)
+            throw new HttpRequestException($"broker {(int)finalResponse.StatusCode} for {path}: {body}");
         return body;
+    }
+
+    /// <summary>Call the authenticated, no-side-effect authorization preflight endpoint.</summary>
+    public async Task<(int Status, string? CorrelationId)> PreflightAsync(string routeSlug, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(routeSlug) || !routeSlug.All(c => char.IsLower(c) || char.IsDigit(c) || c == '-'))
+            throw new ArgumentException("routeSlug must be a lowercase route slug", nameof(routeSlug));
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"{_brokerBase}/preflight/{routeSlug}");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await GetEntraTokenAsync(ct));
+        using var response = await _http.SendAsync(req, ct);
+        return ((int)response.StatusCode, response.Headers.TryGetValues("x-correlation-id", out var values) ? values.FirstOrDefault() : null);
     }
 
     public static async Task<int> Main(string[] args)

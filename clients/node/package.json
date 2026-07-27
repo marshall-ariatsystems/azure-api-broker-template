@@ -4,7 +4,26 @@
   "description": "Vendor API client with NO vendor credentials — Entra auth to the key broker; the broker holds the credential and does any OAuth exchange server-side.",
   "type": "module",
   "main": "ninja-client.mjs",
+  "exports": {
+    ".": "./ninja-client.mjs"
+  },
+  "files": [
+    "ninja-client.mjs",
+    "broker-preflight.mjs",
+    "broker-retry.mjs",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "keywords": [
+    "api-broker",
+    "azure",
+    "entra",
+    "zero-credential"
+  ],
   "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
   "dependencies": {
     "@azure/identity": "^4.5.0"
   }

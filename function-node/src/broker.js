@@ -11,6 +11,7 @@
 //   5. returns only the vendor response. The real key never leaves Azure.
 
 const { app } = require('@azure/functions');
+const crypto = require('node:crypto');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { DefaultAzureCredential } = require('@azure/identity');
 const scrubber = require('./credential-scrubber');
@@ -20,6 +21,9 @@ const { createAzureReferenceAdapter } = require('./azure-reference-adapter');
 const connectionGrants = require('./connection-grants');
 const genericOidcAuthority = require('./generic-oidc-authority');
 const { validateOidcAccessToken } = require('./oidc-identity-adapter');
+const { buildRouteTable, parseSecretCacheTtlSeconds } = require('./role-routing');
+const { runPreflight, safeLogLine } = require('./preflight');
+const sdk = require('../../sdk');
 
 const KEYVAULT_URI = process.env.KEYVAULT_URI;
 const VENDOR_BASE_URL = (process.env.VENDOR_BASE_URL || '').replace(/\/+$/, '');
@@ -78,14 +82,7 @@ function vendorForRole(role) {
 // only by Enterprise App app-role assignments; naming a vendor you were not assigned still 403s.
 // Slug = the middle segment of the role value, lowercased (VendorApi.Graph.Invoke -> "graph"); a
 // "route" field on a ROLE_SECRET_MAP entry overrides it.
-function slugForRole(role, entry) {
-  if (entry && typeof entry === 'object' && entry.route) return String(entry.route).toLowerCase();
-  const m = /^VendorApi\.(.+)\.Invoke$/i.exec(role);
-  return (m ? m[1] : role).toLowerCase();
-}
-const SLUG_TO_ROLE = Object.freeze(Object.fromEntries(
-  Object.entries(ROLE_TO_SECRET).map(([role, entry]) => [slugForRole(role, entry), role]),
-));
+const { slugToRole: SLUG_TO_ROLE } = buildRouteTable(ROLE_TO_SECRET);
 // OFF by default = spec §3c preserved exactly (EXACT one-role match, multi/zero -> 403). Set to
 // true ONLY when you intend one Entra identity to hold several vendor roles and pick per request
 // via /broker/<vendor>/... — this is the deliberate relaxation of the "one token = one key"
@@ -147,13 +144,13 @@ async function getOauthToken(secretName, vendor, pair, { forceRefresh = false, c
 }
 
 // Hop-by-hop / platform headers never forwarded to the vendor.
-const HOP_HEADERS = new Set(['host', 'content-length', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade']);
+const HOP_HEADERS = sdk.HOP_BY_HOP_HEADER_NAMES;
 
 const credential = new DefaultAzureCredential();
 const secretClient = KEYVAULT_URI ? new SecretClient(KEYVAULT_URI, credential) : null;
 
-// In-memory secret cache, TTL 5 min (spec §7). Cleared naturally on cold start / restart.
-const SECRET_TTL_MS = 5 * 60 * 1000;
+// In-memory secret cache. The configured seconds policy is parsed once at worker startup.
+const SECRET_TTL_MS = parseSecretCacheTtlSeconds(process.env.SECRET_CACHE_TTL_SECONDS) * 1000;
 const secretCache = new Map(); // name -> { value, exp }
 
 async function getSecret(name) {
@@ -199,7 +196,8 @@ function identityForGrants({ oid, azp }, evidence) {
   const normalized = supplied && typeof supplied === 'object' ? supplied : {};
   return connectionGrants.normalizeGrantIdentity({
     subject: oid ? `user:${oid}` : `workload:${azp}`,
-    ...(OWNED(normalized, 'groups') ? { groups: normalized.groups } : {}),
+    // Empty IdP group claims normalize to omission, preserving the strict grant-document grammar.
+    ...(OWNED(normalized, 'groups') && (!Array.isArray(normalized.groups) || normalized.groups.length > 0) ? { groups: normalized.groups } : {}),
     ...(OWNED(normalized, 'workload') ? { workload: normalized.workload } : {}),
   });
 }
@@ -222,14 +220,14 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
         } });
         const claims = [{ typ: 'oid', val: identity.oid }, ...(identity.azp ? [{ typ: 'azp', val: identity.azp }] : []), ...identity.roles.map((val) => ({ typ: 'roles', val }))];
         req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
-        genericEvidence = () => ({ groups: identity.groups });
+        genericEvidence = () => (identity.groups.length ? { groups: identity.groups } : {});
       } catch { return { status: 401, jsonBody: { error: 'invalid OIDC bearer' } }; }
     } else if (process.env.AUTH_MODE === 'generic-oidc') {
       try {
         const identity = await genericOidcAuthority.validateRequest(req);
         const claims = [{ typ: 'oid', val: identity.oid }, { typ: 'azp', val: identity.azp }, ...identity.roles.map((val) => ({ typ: 'roles', val }))];
         req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
-        genericEvidence = () => ({ groups: identity.groups });
+        genericEvidence = () => (identity.groups.length ? { groups: identity.groups } : {});
       } catch { return { status: 401, jsonBody: { error: 'invalid generic bearer' } }; }
     }
 
@@ -305,12 +303,19 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
 
     // Grant configuration is deliberately read and parsed for every request: a revoked grant is
     // effective on the next call without a handler rebuild or credential rotation.
-    let grantResult;
+    let grants;
     try {
       const rawGrants = readConnectionGrants();
-      const grants = connectionGrants.parseConnectionGrants(rawGrants, {
+      grants = connectionGrants.parseConnectionGrants(rawGrants, {
         knownConnectionIds: azureReferenceAuthority.connectionIds,
       });
+    } catch {
+      const grantConnection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+      ctx.log(`[broker] grant-config-invalid connection=${grantConnection.id}`);
+      return { status: 403, jsonBody: { error: 'connection access denied' } };
+    }
+    let grantResult;
+    try {
       grantResult = connectionGrants.authorizeGrant({
         identity: identityForGrants({ oid, azp }, genericEvidence),
         connection: azureReferenceAuthority.connectionForRole(selectedRole, vendor),
@@ -510,11 +515,79 @@ function createBrokerHandler(dependencies) {
   return (req, ctx) => brokerHandler(req, ctx, dependencies);
 }
 
+// This is deliberately a separate, credential-free boundary.  Do not call brokerHandler here:
+// its startup checks and downstream path include quota, Key Vault, managed-identity, and vendor
+// work, none of which belongs in an authorization proof.
+async function preflightHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, idSource = { next: () => crypto.randomUUID() } } = {}) {
+  const unauthenticated = () => {
+    const result = runPreflight({ callerCorrelationId: req.headers.get('x-correlation-id'), idSource, counters: { kv: 0, vendor: 0, oauth: 0, fetch: 0 } });
+    ctx.log(`[broker] ${safeLogLine(result)}`);
+    return { status: result.status, headers: { 'x-correlation-id': result.correlationId }, jsonBody: result };
+  };
+  let genericEvidence;
+  if (process.env.AUTH_MODE === 'oidc') {
+    try {
+      const match = /^Bearer\s+(.+)$/i.exec(req.headers.get('authorization') || '');
+      if (!match) throw new Error('missing bearer');
+      const identity = await validateOidcAccessToken({ token: match[1], config: {
+        issuer: process.env.OIDC_ISSUER,
+        audience: process.env.OIDC_AUDIENCE,
+        requiredAcr: process.env.OIDC_REQUIRED_ACR || undefined,
+        requiredAmr: process.env.OIDC_REQUIRED_AMR ? process.env.OIDC_REQUIRED_AMR.split(',').filter(Boolean) : undefined,
+      } });
+      const claims = [{ typ: 'oid', val: identity.oid }, ...(identity.azp ? [{ typ: 'azp', val: identity.azp }] : []), ...identity.roles.map((val) => ({ typ: 'roles', val }))];
+      req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
+      genericEvidence = identity.groups;
+    } catch { return unauthenticated(); }
+  } else if (process.env.AUTH_MODE === 'generic-oidc') {
+    try {
+      const identity = await genericOidcAuthority.validateRequest(req);
+      const claims = [{ typ: 'oid', val: identity.oid }, { typ: 'azp', val: identity.azp }, ...identity.roles.map((val) => ({ typ: 'roles', val }))];
+      req = { ...req, headers: new Map([...req.headers, ['x-ms-client-principal', Buffer.from(JSON.stringify({ claims })).toString('base64')]]) };
+      genericEvidence = identity.groups;
+    } catch { return unauthenticated(); }
+  }
+
+  const { roles, oid, azp } = rolesFromPrincipal(req);
+  const args = {
+    principal: { oid, azp, roles, ...(genericEvidence?.length ? { groups: genericEvidence } : {}) },
+    routeSlug: String(req.params?.routeSlug || '').toLowerCase(),
+    roleSecretMap: ROLE_TO_SECRET,
+    connectionGrantsJson: undefined,
+    callerCorrelationId: req.headers.get('x-correlation-id'),
+    idSource,
+    counters: { kv: 0, vendor: 0, oauth: 0, fetch: 0 },
+  };
+  let result;
+  try {
+    result = runPreflight({ ...args, connectionGrantsJson: readConnectionGrants() });
+  } catch {
+    // Grant configuration is private. Treat an invalid or unavailable document as a closed grant
+    // gate, preserving the preflight's categorical, redacted surface.
+    result = runPreflight({ ...args, connectionGrantsJson: JSON.stringify({ version: 1, connections: [] }) });
+  }
+  ctx.log(`[broker] ${safeLogLine(result)}`);
+  return { status: result.status, headers: { 'x-correlation-id': result.correlationId }, jsonBody: result };
+}
+
+function createPreflightHandler(dependencies) {
+  return (req, ctx) => preflightHandler(req, ctx, dependencies);
+}
+
 app.http('broker', {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   authLevel: 'anonymous', // Easy Auth enforces authN/authZ at the platform layer.
   route: 'broker/{*path}',
   handler: brokerHandler,
+});
+
+app.http('preflight', {
+  methods: ['GET'],
+  authLevel: 'anonymous', // Easy Auth (or the configured OIDC mode above) authenticates the caller.
+  // Keep this under the broker base so clients configured with /api/broker use one
+  // stable public prefix. The route slug makes the proof authorization-specific.
+  route: 'broker/preflight/{routeSlug}',
+  handler: preflightHandler,
 });
 
 // Lightweight health/soak probe — no secret access, no vendor call. Surfaces per-instance uptime and
@@ -539,4 +612,4 @@ app.http('health', {
   }),
 });
 
-module.exports = { createBrokerHandler };
+module.exports = { createBrokerHandler, createPreflightHandler };

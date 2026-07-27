@@ -6,7 +6,7 @@ const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url
 const signed = (claims) => { const header = encode({ alg: 'RS256', kid: 'key-1' }); const body = encode(claims); const sign = crypto.createSign('RSA-SHA256'); sign.update(`${header}.${body}`); sign.end(); return `${header}.${body}.${sign.sign(pair.privateKey).toString('base64url')}`; };
 const jwks = { keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'key-1', kty: 'RSA' }] };
 const response = (value) => new Response(JSON.stringify(value), { status: 200 });
-function fetcher(url) { if (String(url) === `${issuer}/.well-known/openid-configuration`) return response({ issuer, jwks_uri: `${issuer}/jwks` }); if (String(url) === `${issuer}/jwks`) return response(jwks); throw new Error(`unexpected ${url}`); }
+function fetcher(url) { if (String(url) === `${issuer}/.well-known/openid-configuration`) return response({ issuer, jwks_uri: `${issuer}/jwks`, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token` }); if (String(url) === `${issuer}/jwks`) return response(jwks); throw new Error(`unexpected ${url}`); }
 test('generic OIDC rejects spoofed platform principal before downstream work', async () => {
   await assert.rejects(authority.validateRequest({ headers: new Map([['x-ms-client-principal', 'spoofed']]) }, { environment: {} }));
 });

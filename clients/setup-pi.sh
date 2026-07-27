@@ -7,12 +7,10 @@
 #   source broker.env
 #   .broker-venv/bin/python test_broker.py     # A/B/D/E should PASS
 #
-# The pi must be able to reach the broker's private IP (10.0.0.10) over the private VPN.
+# The pi must be able to reach its explicitly configured private endpoint over the VPN.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VENV="${VENV:-$HERE/.broker-venv}"
-BROKER_HOST="func-broker-cxapi-csb2cscrdcdka3fy.centralus-01.azurewebsites.net"
-BROKER_IP="10.0.0.10"
 
 echo "[1/4] python venv -> $VENV"
 python3 -m venv "$VENV"
@@ -26,7 +24,10 @@ if [ ! -f "$HERE/broker.env" ]; then
 export AZURE_TENANT_ID=6a776d8b-0d62-4acb-945a-a51042d17ac0
 export AZURE_CLIENT_ID=1cea04a4-0e41-4959-a4f4-f4e36038d85f
 export AZURE_CLIENT_SECRET=CHANGE_ME
-# optional: export BROKER_IP=10.0.0.10   # set to "" to use normal DNS instead of the socket pin
+# Set these deployment-specific values before using the client or reachability probe.
+export BROKER_HOST="<function-app>.azurewebsites.net"
+export BROKER_SCOPE="api://<broker-app-id>/.default"
+# Optional: export BROKER_IP="<private-ip>" for invocation-scoped DNS pinning.
 ENV
   chmod 600 "$HERE/broker.env"
   echo "  created broker.env (chmod 600) — set AZURE_CLIENT_SECRET before sourcing"
@@ -35,14 +36,18 @@ else
 fi
 
 echo "[3/4] broker reachability over VPN (expect HTTP 401 = reachable + auth active)"
-code=$(curl -sS -m 6 --resolve "$BROKER_HOST:443:$BROKER_IP" \
-  -o /dev/null -w '%{http_code}' "https://$BROKER_HOST/api/broker/" 2>/dev/null || echo "000")
-if [ "$code" = "401" ]; then
-  echo "  OK: broker reachable at $BROKER_IP (401 unauthenticated, as expected)"
-elif [ "$code" = "000" ]; then
-  echo "  WARN: no response from $BROKER_IP — is this pi on the private VPN?"
+if [ -n "${BROKER_HOST:-}" ] && [ -n "${BROKER_IP:-}" ]; then
+  code=$(curl -sS -m 6 --resolve "$BROKER_HOST:443:$BROKER_IP" \
+    -o /dev/null -w '%{http_code}' "https://$BROKER_HOST/api/broker/" 2>/dev/null || echo "000")
+  if [ "$code" = "401" ]; then
+    echo "  OK: broker reachable at configured BROKER_IP (401 unauthenticated, as expected)"
+  elif [ "$code" = "000" ]; then
+    echo "  WARN: no response from configured BROKER_IP — is this pi on the private VPN?"
+  else
+    echo "  note: got HTTP $code (reachable; not the expected 401 — check anyway)"
+  fi
 else
-  echo "  note: got HTTP $code (reachable; not the expected 401 — check anyway)"
+  echo "  skipped: set BROKER_HOST and BROKER_IP to run the reachability probe"
 fi
 
 echo "[4/4] done. Next:"

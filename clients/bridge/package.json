@@ -6,12 +6,12 @@
   "main": "broker-bridge.mjs",
   "author": "gitmarsh <marsh@cloudmarsh.com>",
   "license": "Apache-2.0",
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">=24" },
   "scripts": {
     "start": "node broker-bridge.mjs",
     "serve": "node broker-bridge.mjs serve",
     "run": "node broker-bridge.mjs run",
-    "test": "node --test test/stateless-runtime-*.test.mjs test/public-oidc*.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "bundle": "esbuild broker-bridge.mjs --bundle --platform=node --format=cjs --outfile=dist/broker-bridge.cjs",
     "package": "node scripts/package-sea.mjs"
   },

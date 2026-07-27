@@ -27,26 +27,107 @@
 // Usage as a CLI:
 //   node ninja-client.mjs /v2/organizations
 
-import { DefaultAzureCredential } from '@azure/identity';
+import { loadBrokerConfig } from './broker-preflight.mjs';
+import { requestWithRetry } from './broker-retry.mjs';
 
-const BROKER_BASE = (process.env.BROKER_BASE || '').replace(/\/+$/, '');
-const BROKER_SCOPE = process.env.BROKER_SCOPE || '';
-if (!BROKER_BASE || !BROKER_SCOPE) {
-  console.error('BROKER_BASE and BROKER_SCOPE env vars are required.\n' +
-    '  BROKER_BASE  = https://<function-app>.azurewebsites.net/api/broker\n' +
-    '  BROKER_SCOPE = api://<broker-client-id>/.default');
-  process.exit(2);
-}
-
-const credential = new DefaultAzureCredential();
+let credential = null;
 let cachedEntra = null; // { token, exp }
 
-async function entraToken() {
+async function entraToken(scope) {
   const now = Date.now();
   if (cachedEntra && cachedEntra.exp > now) return cachedEntra.token;
-  const t = await credential.getToken(BROKER_SCOPE);
+  if (!credential) {
+    const { DefaultAzureCredential } = await import('@azure/identity');
+    credential = new DefaultAzureCredential();
+  }
+  const t = await credential.getToken(scope);
   cachedEntra = { token: t.token, exp: t.expiresOnTimestamp - 120_000 };
   return t.token;
+}
+
+const CREDENTIAL_HEADERS = new Set([
+  'authorization', 'proxy-authorization', 'x-api-key', 'api-key', 'apikey', 'api_key',
+  'key', 'access_token', 'token', 'subscription-key', 'x-api-key-id', 'x-api-secret',
+  'x-key-id', 'x-secret', 'client_id', 'client_secret',
+]);
+
+function safeCallerHeaders(headers) {
+  const normalized = new Headers(headers || {});
+  for (const name of normalized.keys()) {
+    if (CREDENTIAL_HEADERS.has(name.toLowerCase())) {
+      throw new TypeError(`credential-shaped caller header is not allowed: ${name}`);
+    }
+  }
+  return normalized;
+}
+
+function retryPolicy(init) {
+  return {
+    maxRetries: Number.isSafeInteger(init.maxRetries) ? Math.max(0, Math.min(init.maxRetries, 2)) : 2,
+    jitterCeilingMs: 250,
+    defaultRetryAfterSeconds: 1,
+  };
+}
+
+/**
+ * Build a client whose public request and preflight paths both use validated broker config.
+ * Injection points are intentionally provided for integration tests and alternate fetch runtimes.
+ */
+export function createNinjaClient({ config = loadBrokerConfig(), acquireToken, fetchImpl = fetch, clock, jitter } = {}) {
+  config = loadBrokerConfig({ BROKER_BASE: config.base, BROKER_SCOPE: config.scope });
+  const token = acquireToken || (() => entraToken(config.scope));
+  const waitClock = clock || { sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)) };
+  const randomJitter = jitter || { next: (ceiling) => Math.floor(Math.random() * (ceiling + 1)) };
+
+  async function authenticatedFetch(url, init = {}) {
+    const { headers, ...rest } = init;
+    const safeHeaders = safeCallerHeaders(headers);
+    safeHeaders.set('authorization', `Bearer ${await token()}`);
+    return fetchImpl(url, { ...rest, headers: safeHeaders });
+  }
+
+  async function preflight(routeSlug) {
+    if (typeof routeSlug !== 'string' || !/^[a-z0-9-]{1,64}$/.test(routeSlug)) {
+      throw new TypeError('routeSlug must be a lowercase route slug');
+    }
+    const response = await authenticatedFetch(`${config.base}/preflight/${routeSlug}`, { method: 'GET', headers: { accept: 'application/json' } });
+    return { status: response.status, correlationId: response.headers.get('x-correlation-id') ?? null };
+  }
+
+  async function ninja(path, init = {}) {
+    if (typeof path !== 'string' || !path) throw new TypeError('path is required');
+    const { json, maxRetries, ...requestInit } = init;
+    const method = (requestInit.method || 'GET').toUpperCase();
+    const request = {
+      ...requestInit,
+      method,
+      ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
+      headers: {
+        accept: 'application/json',
+        ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(requestInit.headers || {}),
+      },
+    };
+    let response;
+    await requestWithRetry({
+      doFetch: async () => {
+        response = await authenticatedFetch(`${config.base}${path.startsWith('/') ? path : `/${path}`}`, request);
+        return response;
+      },
+      request: { idempotent: method === 'GET' || method === 'HEAD' },
+      policy: retryPolicy({ maxRetries }),
+      clock: waitClock,
+      jitter: randomJitter,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`broker ${response.status} for ${path}: ${detail.slice(0, 500)}`);
+    }
+    const ct = response.headers.get('content-type') || '';
+    return ct.includes('json') ? response.json() : response.text();
+  }
+
+  return Object.freeze({ ninja, preflight });
 }
 
 /**
@@ -56,23 +137,12 @@ async function entraToken() {
  * @returns parsed JSON (or text when the response isn't JSON)
  */
 export async function ninja(path, init = {}) {
-  const { json, headers, ...rest } = init;
-  const res = await fetch(`${BROKER_BASE}${path.startsWith('/') ? path : '/' + path}`, {
-    ...rest,
-    ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
-    headers: {
-      accept: 'application/json',
-      ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...headers,
-      authorization: `Bearer ${await entraToken()}`,
-    },
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`broker ${res.status} for ${path}: ${detail.slice(0, 500)}`);
-  }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('json') ? res.json() : res.text();
+  return createNinjaClient().ninja(path, init);
+}
+
+/** Run the authenticated, no-side-effect broker authorization preflight. */
+export async function preflight(routeSlug) {
+  return createNinjaClient().preflight(routeSlug);
 }
 
 // CLI mode: node ninja-client.mjs <path> [method] [json-body]

@@ -1,11 +1,11 @@
 'use strict';
 const crypto = require('node:crypto');
 const { requireObject, rejectUnknownKeys } = require('./schema-utils');
+const { canonicalJson, deepFreeze } = require('../../sdk');
 const MAX_BYTES = 64 * 1024, PREFIX = 'registration package validation failed: ';
 const SECRET_KEY = /secret|password|token|credential|private[_-]?key|api[_-]?key|client[_-]?secret|refresh/i;
-const SECRET_VALUE = /-----BEGIN|client_secret=|(^|[^A-Za-z])Bearer\s+[A-Za-z0-9._~+/-]{16,}|eyJ[A-Za-z0-9_-]{14,}\.[A-Za-z0-9_-]{6,}\./;
+const SECRET_VALUE = /-----BEGIN|client_secret=|secret=|offline_access|(^|[^A-Za-z])Bearer\s+[A-Za-z0-9._~+/-]{16,}|eyJ[A-Za-z0-9_-]{14,}\.[A-Za-z0-9_-]{6,}\./;
 const fail = (path) => { throw new Error(PREFIX + path); };
-const freeze = (v) => { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
 const object = (v, p) => requireObject(v, () => fail(p));
 const exact = (v, keys, p) => rejectUnknownKeys(v, new Set(keys), (key) => fail(p + '.' + key));
 const text = (v, p, n) => (typeof v !== 'string' || !v || v.length > n) ? fail(p) : v;
@@ -26,25 +26,39 @@ function content(v, p = '$.package') {
   object(v.assurance, p + '.assurance'); exact(v.assurance, ['claim','equals'], p + '.assurance'); const ak = Object.keys(v.assurance); if (ak.length && ak.length !== 2) fail(p + '.assurance');
   const assurance = ak.length ? { claim: text(v.assurance.claim, p + '.assurance.claim', 64), equals: text(v.assurance.equals, p + '.assurance.equals', 256) } : {}; if (assurance.claim && !/^[a-zA-Z0-9_.:-]{1,64}$/.test(assurance.claim)) fail(p + '.assurance.claim');
   if (!Array.isArray(v.bootstrap) || v.bootstrap.length > 16) fail(p + '.bootstrap'); const bootstrap = v.bootstrap.map((x, i) => text(x, p + '.bootstrap.' + i, 512));
-  return freeze({ id, displayName, discovery: { issuer }, redirectUris, resource: { audience }, claims, assurance, bootstrap });
+  return deepFreeze({ id, displayName, discovery: { issuer }, redirectUris, resource: { audience }, claims, assurance, bootstrap });
 }
-function canonicalJson(v) { if (v === null || ['string','number','boolean'].includes(typeof v)) return JSON.stringify(v); if (Array.isArray(v)) return '[' + v.map(canonicalJson).join(',') + ']'; if (!v || typeof v !== 'object' || Object.getPrototypeOf(v) !== Object.prototype) throw new TypeError('canonical JSON requires plain JSON'); return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonicalJson(v[k])).join(',') + '}'; }
 function parseRegistrationPackage(raw) {
   if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > MAX_BYTES) fail('$'); let d; try { d = JSON.parse(raw); } catch { fail('$'); }
   scan(d); object(d, '$'); exact(d, ['formatVersion','package','signature'], '$'); if (d.formatVersion !== 1) fail('$.formatVersion'); const pkg = content(d.package);
   object(d.signature, '$.signature'); exact(d.signature, ['algorithm','publicKeySpki','value'], '$.signature'); if (d.signature.algorithm !== 'Ed25519') fail('$.signature.algorithm');
   for (const k of ['publicKeySpki','value']) if (typeof d.signature[k] !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(d.signature[k])) fail('$.signature.' + k);
-  return freeze({ formatVersion: 1, package: pkg, signature: { algorithm: 'Ed25519', publicKeySpki: d.signature.publicKeySpki, value: d.signature.value } });
+  return deepFreeze({ formatVersion: 1, package: pkg, signature: { algorithm: 'Ed25519', publicKeySpki: d.signature.publicKeySpki, value: d.signature.value } });
 }
 function signRegistrationPackage(input, privateKey) {
   scan(input, '$.package'); const pkg = content(input); if (!(privateKey instanceof crypto.KeyObject) || privateKey.type !== 'private' || privateKey.asymmetricKeyType !== 'ed25519') fail('$.privateKey');
   const publicKeySpki = crypto.createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64'); const value = crypto.sign(null, Buffer.from(canonicalJson(pkg)), privateKey).toString('base64');
-  return freeze({ formatVersion: 1, package: pkg, signature: { algorithm: 'Ed25519', publicKeySpki, value } });
+  return deepFreeze({ formatVersion: 1, package: pkg, signature: { algorithm: 'Ed25519', publicKeySpki, value } });
 }
-function checked(raw, options = {}, inspect = false) {
-  const doc = parseRegistrationPackage(raw); if (options.trustedPublicKeySpki !== undefined && options.trustedPublicKeySpki !== doc.signature.publicKeySpki) throw new Error('untrusted signing key');
+function trustedAnchor(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype || Object.keys(options).length !== 1 || typeof options.trustedPublicKeySpki !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(options.trustedPublicKeySpki)) throw new Error('deployment trust anchor is required');
+  try {
+    const key = crypto.createPublicKey({ key: Buffer.from(options.trustedPublicKeySpki, 'base64'), format: 'der', type: 'spki' });
+    if (key.asymmetricKeyType !== 'ed25519') throw new Error('not Ed25519');
+    return options.trustedPublicKeySpki;
+  } catch {
+    throw new Error('deployment trust anchor is invalid');
+  }
+}
+function checked(raw, options, inspect = false) {
+  const doc = parseRegistrationPackage(raw);
+  if (!inspect) {
+    const anchor = trustedAnchor(options);
+    const received = Buffer.from(doc.signature.publicKeySpki, 'utf8'), expected = Buffer.from(anchor, 'utf8');
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) throw new Error('untrusted signing key');
+  }
   try { const key = crypto.createPublicKey({ key: Buffer.from(doc.signature.publicKeySpki, 'base64'), format: 'der', type: 'spki' }); const valid = key.asymmetricKeyType === 'ed25519' && crypto.verify(null, Buffer.from(canonicalJson(doc.package)), key, Buffer.from(doc.signature.value, 'base64')); if (!valid && !inspect) fail('$.signature'); return { doc, valid }; } catch (e) { if (String(e.message).startsWith(PREFIX)) throw e; if (inspect) return { doc, valid: false }; fail('$.signature'); }
 }
 function verifyRegistrationPackage(raw, options) { return checked(raw, options).doc; }
-function inspectRegistrationPackage(raw) { const { doc, valid } = checked(raw, {}, true), p = doc.package; return freeze({ signatureState: valid ? 'valid' : 'invalid', keyFingerprint: crypto.createHash('sha256').update(Buffer.from(doc.signature.publicKeySpki, 'base64')).digest('hex'), lines: ['id: ' + p.id, 'displayName: ' + p.displayName, 'discovery: ' + p.discovery.issuer, 'redirectUris: ' + p.redirectUris.join(', '), 'resource: ' + p.resource.audience, 'claims: ' + canonicalJson(p.claims), 'assurance: ' + canonicalJson(p.assurance), 'bootstrap: ' + p.bootstrap.join(' | ')] }); }
+function inspectRegistrationPackage(raw) { const { doc, valid } = checked(raw, {}, true), p = doc.package; return deepFreeze({ signatureState: valid ? 'valid' : 'invalid', keyFingerprint: crypto.createHash('sha256').update(Buffer.from(doc.signature.publicKeySpki, 'base64')).digest('hex'), lines: ['id: ' + p.id, 'displayName: ' + p.displayName, 'discovery: ' + p.discovery.issuer, 'redirectUris: ' + p.redirectUris.join(', '), 'resource: ' + p.resource.audience, 'claims: ' + canonicalJson(p.claims), 'assurance: ' + canonicalJson(p.assurance), 'bootstrap: ' + p.bootstrap.join(' | ')] }); }
 module.exports = { canonicalJson, parseRegistrationPackage, signRegistrationPackage, verifyRegistrationPackage, inspectRegistrationPackage };

@@ -1,10 +1,11 @@
 import { createPublicKey, verify } from 'node:crypto';
+import sdk from '../../sdk/index.js';
 
 const LIMIT = 256 * 1024;
 const b64 = (part) => Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 const json = (part) => JSON.parse(b64(part).toString('utf8'));
 const fail = (message) => { throw new Error(`OIDC validation failed: ${message}`); };
-const exactIssuer = (value) => String(value).replace(/\/+$/, '');
+const { normalizeIssuer: exactIssuer, requireHttpsIssuer } = sdk;
 
 export async function fetchJson(url, fetcher = fetch) {
   const target = new URL(url);
@@ -17,8 +18,7 @@ export async function fetchJson(url, fetcher = fetch) {
 }
 
 export async function discover(issuer, fetcher = fetch) {
-  const normalized = exactIssuer(issuer);
-  if (!/^https:\/\//.test(normalized)) fail('issuer must be HTTPS');
+  const normalized = requireHttpsIssuer(issuer, () => fail('issuer must be HTTPS'));
   const value = await fetchJson(`${normalized}/.well-known/openid-configuration`, fetcher);
   if (exactIssuer(value.issuer) !== normalized || !value.jwks_uri || !value.authorization_endpoint || !value.token_endpoint) fail('invalid discovery metadata');
   for (const endpoint of [value.jwks_uri, value.authorization_endpoint, value.token_endpoint]) if (new URL(endpoint).protocol !== 'https:') fail('discovery endpoint must be HTTPS');
