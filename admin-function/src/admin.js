@@ -9,7 +9,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { PolicyStore, publicConnections, mutateGrant, vendorIdFor, updateConnectionStatus, recordRotation } = require('./policy-store');
 
-const OPERATOR_ROLE = 'Tessera.Operator';
+const OPERATOR_ROLE = 'Ariat.Operator';
 const MAX_BODY = 64 * 1024;
 const credential = new DefaultAzureCredential();
 const policyStore = process.env.APP_CONFIG_ENDPOINT ? new PolicyStore({ endpoint: process.env.APP_CONFIG_ENDPOINT, credential }) : null;

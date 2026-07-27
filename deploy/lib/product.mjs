@@ -51,14 +51,14 @@ function config(file) {
 }
 function suffix(value) { return createHash('sha256').update(value).digest('hex').slice(0, 8); }
 function names(input) { const id = suffix(`${input.resourceGroup}:${input.environment}`); return Object.freeze({ suffix: id, vnet: `ariat-${id}-vnet`, broker: `ariat-${id}-func`, admin: `ariat-${id}-admin` }); }
-function appPayload(displayName, appRoles, redirectUris = []) { return { displayName, signInAudience: 'AzureADMyOrg', identifierUris: [], api: { requestedAccessTokenVersion: 2, oauth2PermissionScopes: [{ adminConsentDescription: 'Access Tessera as the signed-in user.', adminConsentDisplayName: 'Access Tessera', id: randomUUID(), isEnabled: true, type: 'User', userConsentDescription: 'Access Tessera on your behalf.', userConsentDisplayName: 'Access Tessera', value: 'user_impersonation' }] }, appRoles, web: { redirectUris, implicitGrantSettings: { enableIdTokenIssuance: true, enableAccessTokenIssuance: false } } }; }
+function appPayload(displayName, appRoles, redirectUris = []) { return { displayName, signInAudience: 'AzureADMyOrg', identifierUris: [], api: { requestedAccessTokenVersion: 2, oauth2PermissionScopes: [{ adminConsentDescription: 'Access Ariat API Broker as the signed-in user.', adminConsentDisplayName: 'Access Ariat API Broker', id: randomUUID(), isEnabled: true, type: 'User', userConsentDescription: 'Access Ariat API Broker on your behalf.', userConsentDisplayName: 'Access Ariat API Broker', value: 'user_impersonation' }] }, appRoles, web: { redirectUris, implicitGrantSettings: { enableIdTokenIssuance: true, enableAccessTokenIssuance: false } } }; }
 function graph(method, path, body, dryRun) { return command('az', ['rest', '--method', method, '--url', `https://graph.microsoft.com/v1.0${path}`, ...(body ? ['--body', JSON.stringify(body)] : [])], { json: true, dryRun }); }
 function createApp(displayName, appRoles, redirectUris, dryRun) {
   if (!dryRun) {
     const existing = command('az', ['ad', 'app', 'list', '--display-name', displayName, '-o', 'json'], { json: true }).sort((a, b) => String(a.createdDateTime).localeCompare(String(b.createdDateTime)));
     if (existing.length) {
       const app = existing[0]; const servicePrincipal = command('az', ['ad', 'sp', 'show', '--id', app.appId, '-o', 'json'], { json: true });
-      if (appRoles.length && !app.appRoles?.some((item) => item.value === 'Tessera.Operator')) graph('PATCH', `/applications/${app.id}`, { appRoles: [...(app.appRoles || []), ...appRoles] }, false);
+      if (appRoles.length && !app.appRoles?.some((item) => item.value === 'Ariat.Operator')) graph('PATCH', `/applications/${app.id}`, { appRoles: [...(app.appRoles || []), ...appRoles] }, false);
       return { appId: app.appId, id: app.id, servicePrincipalId: servicePrincipal.id };
     }
   }
@@ -139,9 +139,9 @@ function deploy(input, dryRun) {
   const tags = Object.entries(input.tags || {}).map(([k, v]) => `${k}=${v}`);
   command('az', ['group', 'create', '--name', input.resourceGroup, '--location', input.location, ...(tags.length ? ['--tags', ...tags] : [])], { dryRun });
   command('az', deploymentArgs(input.resourceGroup, 'deploy/infra/network.bicep', { location: input.location, vnetName: name.vnet, addressPrefixes: input.network.addressPrefixes, tags: input.tags || {} }), { dryRun });
-  const brokerIdentity = createApp(`Tessera Broker ${input.environment}`, [], [], dryRun);
+  const brokerIdentity = createApp(`Ariat Broker ${input.environment}`, [], [], dryRun);
   const adminBase = `https://${name.admin}.azurewebsites.net`;
-  const adminIdentity = createApp(`Tessera Admin ${input.environment}`, [role('Tessera.Operator', ['User'])], [`${adminBase}/.auth/login/aad/callback`], dryRun);
+  const adminIdentity = createApp(`Ariat Admin ${input.environment}`, [role('Ariat.Operator', ['User'])], [`${adminBase}/.auth/login/aad/callback`], dryRun);
   // OneDeploy must complete before a broker Private Endpoint is attached.
   const foundationParameters = { namingSuffix: name.suffix, location: input.location, existingVnetName: name.vnet, existingVnetResourceGroup: input.resourceGroup, vnetIntegrationSubnetCidr: input.network.integrationSubnetCidr, privateEndpointSubnetCidr: input.network.privateEndpointSubnetCidr, onPremIngressCidr: input.operatorAllowedCidrs[0], vpnClientCidr: input.operatorAllowedCidrs[0], blockedSourceCidrs: [], deployPrivateEndpoint: false, publicNetworkAccess: 'Disabled', brokerHostname: `${name.broker}.azurewebsites.net`, brokerSettings: { ROLE_SECRET_MAP: '{}' } };
   const foundation = command('az', deploymentArgs(input.resourceGroup, 'iac/foundation.bicep', foundationParameters), { json: true, dryRun });
@@ -158,7 +158,7 @@ function deploy(input, dryRun) {
   command('az', deploymentArgs(input.resourceGroup, 'iac/management-auth.bicep', { functionName: m.adminFunctionName || name.admin, operatorClientId: adminIdentity.appId, operatorIssuer: `https://login.microsoftonline.com/${tenantId}/v2.0`, operatorAppIdUri: `api://${adminIdentity.appId}`, allowedApplications: [] }), { dryRun });
   command('az', ['appconfig', 'update', '--name', m.appConfigName || `<from-management>`, '--resource-group', input.resourceGroup, '--public-network', 'Disabled'], { dryRun });
   if (!dryRun) {
-    const operatorRoleId = (graph('GET', `/applications/${adminIdentity.id}`, null, false).appRoles || []).find((item) => item.value === 'Tessera.Operator')?.id;
+    const operatorRoleId = (graph('GET', `/applications/${adminIdentity.id}`, null, false).appRoles || []).find((item) => item.value === 'Ariat.Operator')?.id;
     try { graph('POST', `/servicePrincipals/${adminIdentity.servicePrincipalId}/appRoleAssignedTo`, { principalId: deployer.id, resourceId: adminIdentity.servicePrincipalId, appRoleId: operatorRoleId }, false); } catch (error) {
       if (!/already exists|Request_BadRequest/i.test(String(error.message))) throw error;
     }
@@ -175,15 +175,23 @@ function deploy(input, dryRun) {
     deployFunction(input.resourceGroup, f.functionName || name.broker, brokerZip, f.storageAccountName, input.location, dryRun);
     deployFunction(input.resourceGroup, m.adminFunctionName || name.admin, adminZip, f.storageAccountName, input.location, dryRun);
   } finally {
-    command('az', ['functionapp', 'update', '--resource-group', input.resourceGroup, '--name', f.functionName || name.broker, '--set', 'publicNetworkAccess=Disabled'], { dryRun });
+    // When a private endpoint is deployed, the broker's public endpoint is closed (VNet-only
+    // ingress). When it is skipped (e.g. an external virtual gateway fronts the broker), the
+    // public endpoint stays Enabled so the gateway/allowlisted IPs can reach it; Easy Auth and the
+    // NSG IP allow/deny list remain the enforced controls.
+    const finalBrokerPublicAccess = input.network.deployPrivateEndpoint === false ? 'Enabled' : 'Disabled';
+    command('az', ['functionapp', 'update', '--resource-group', input.resourceGroup, '--name', f.functionName || name.broker, '--set', `publicNetworkAccess=${finalBrokerPublicAccess}`], { dryRun });
     if (storageOpened) command('az', ['storage', 'account', 'update', '--resource-group', input.resourceGroup, '--name', f.storageAccountName, '--public-network-access', 'Disabled', '--default-action', 'Deny'], { dryRun });
   }
-  command('az', deploymentArgs(input.resourceGroup, 'iac/foundation.bicep', { ...foundationParameters, deployPrivateEndpoint: true }), { dryRun });
+  // Attach the broker private endpoint unless explicitly disabled (external gateway ingress).
+  if (input.network.deployPrivateEndpoint !== false) {
+    command('az', deploymentArgs(input.resourceGroup, 'iac/foundation.bicep', { ...foundationParameters, deployPrivateEndpoint: true }), { dryRun });
+  }
   const output = { subscriptionId, broker: { appId: brokerIdentity.appId, principalId: f.identityPrincipalId, functionName: f.functionName || name.broker, url: `https://${f.functionDefaultHostname || `${name.broker}.azurewebsites.net`}` }, admin: { appId: adminIdentity.appId, functionName: m.adminFunctionName || name.admin, url: `https://${m.adminHostname || `${name.admin}.azurewebsites.net`}/console` }, appConfigEndpoint: m.appConfigEndpoint, keyVaultName: f.keyVaultName, storageAccountName: f.storageAccountName };
   if (dryRun) { process.stdout.write(`Dry-run complete; no state file was written.\n${JSON.stringify(output, null, 2)}\n`); return; }
   const state = writeState(input, output); process.stdout.write(`Deployment state written to ${state}.\n`);
 }
-function state(file) { if (!file || !existsSync(file)) fail('--state must reference a generated Tessera state file'); return JSON.parse(readFileSync(file, 'utf8')); }
+function state(file) { if (!file || !existsSync(file)) fail('--state must reference a generated Ariat state file'); return JSON.parse(readFileSync(file, 'utf8')); }
 function api(stateValue, path, method, body) { const token = command('az', ['account', 'get-access-token', '--scope', `api://${stateValue.admin.appId}/user_impersonation`, '--query', 'accessToken', '-o', 'tsv']); const response = spawnSync('curl', ['--fail-with-body', '--silent', '--show-error', '-X', method, '-H', `Authorization: Bearer ${token}`, '-H', 'content-type: application/json', ...(body ? ['--data', JSON.stringify(body)] : []), `${stateValue.admin.url.replace(/\/console$/, '')}/api/${path}`], { encoding: 'utf8' }); if (response.status !== 0) fail(response.stderr || response.stdout || 'management API request failed'); return JSON.parse(response.stdout); }
 function manage(positional, options) {
   const current = state(options.state); const [area, action] = positional;

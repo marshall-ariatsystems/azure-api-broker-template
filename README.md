@@ -133,7 +133,7 @@ are in [docs/deployment/README.md](docs/deployment/README.md).
 
 The Entra-protected Admin UI is deployed with the broker. It provides vendor inventory, assigned
 roles, connection and grant management, write-only credential rotation, and vendor-specific audit
-visibility. Access is limited to the configured operator CIDRs and the `Tessera.Operator` Entra role.
+visibility. Access is limited to the configured operator CIDRs and the `Ariat.Operator` Entra role.
 
 The same deployment state drives non-interactive operator actions:
 
