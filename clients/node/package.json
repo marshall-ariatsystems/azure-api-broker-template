@@ -22,7 +22,7 @@
   ],
   "engines": { "node": ">=18" },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --check ninja-client.mjs"
   },
   "dependencies": {
     "@azure/identity": "^4.5.0"

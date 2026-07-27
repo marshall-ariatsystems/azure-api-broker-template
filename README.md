@@ -245,7 +245,6 @@ called out so the local agent can grow without turning its core into Azure-only 
 | [`broker-adapters/`](broker-adapters/) | SDK/environment compatibility adapters. |
 | [`broker-protocol/`](broker-protocol/) | Non-secret broker profile and discovery contract. |
 | [`providers/azure/`](providers/azure/) | Azure/Entra/Key Vault reference-provider boundary. |
-| [`examples/azure-template/`](examples/azure-template/) | Azure deployment example boundary. |
 
 ## Current Azure reference layout
 
@@ -263,7 +262,6 @@ called out so the local agent can grow without turning its core into Azure-only 
 | `clients/` | Bridge proxy, native clients, dev quickstart, developer security runbook, key-free sample env. |
 | `observability/` | Alerts (4xx/5xx/latency/cold-start/KV-anomaly/cost), per-`oid` and per-key dashboards, access-review cadence. |
 | `admin-ui/` | Localhost-only admin console. |
-| `test/` | Test plan, acceptance matrix, rotation and rollout runbooks, token-claim assertion, smoke bars. |
 | `docs/SYSADMIN-GUIDE.md` | Portal UI + `az` CLI deployment guide. |
 
 ## Placeholder convention
@@ -279,21 +277,13 @@ GUIDs in this repo are placeholders, substituted at deploy time and grep-findabl
 ## Verify
 
 ```bash
-# Artifact + negative-match gate scans. No Azure credentials needed.
-bash test/run-smoke-bars.sh
-
-# Broker behavioral tests (mocked Azure SDK, real handler)
+# Runtime and package syntax checks
 npm test --prefix function-node
-
-# Release-relevant client and bridge checks
 npm test --prefix clients/bridge
-node --test clients/node/test/*.test.mjs
-python3 -m unittest clients.test_broker_config clients.test_broker_preflight clients.test_broker_client_integration
+npm test --prefix clients/node
+python3 -m py_compile clients/broker_client.py clients/broker_config.py clients/broker_preflight.py
 dotnet build clients/dotnet/NinjaBrokerClient.csproj --no-restore --nologo -v q
 ```
-
-Bar-by-bar evidence is in [`test/results.md`](test/results.md); the parity matrix is
-[`test/acceptance-matrix.md`](test/acceptance-matrix.md).
 
 ## Constraints
 
@@ -337,7 +327,7 @@ Operating it safely:
   key locations and what to do if a key is suspected exposed.
 - [`observability/rbac-governance.md`](observability/rbac-governance.md) covers the quarterly access
   review, the least-privilege checklist, and offboarding.
-- [`test/rotation-runbook.md`](test/rotation-runbook.md) covers key rotation with cache-bust.
+- [`identity/grant-revoke-runbook.md`](identity/grant-revoke-runbook.md) covers access changes and rotation procedures.
 
 ## Contributing
 

@@ -11,7 +11,7 @@
     "start": "node broker-bridge.mjs",
     "serve": "node broker-bridge.mjs serve",
     "run": "node broker-bridge.mjs run",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --check broker-bridge.mjs",
     "bundle": "esbuild broker-bridge.mjs --bundle --platform=node --format=cjs --outfile=dist/broker-bridge.cjs",
     "package": "node scripts/package-sea.mjs"
   },

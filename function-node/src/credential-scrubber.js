@@ -27,7 +27,7 @@ const CREDENTIAL_PARAMETER_NAMES = new Set([
 //
 // `authorization` carries the caller's own Entra token: Easy Auth validates it at the platform and
 // still forwards it to the app, so EVERY genuine caller sends it (see clients/call-broker.sh,
-// clients/broker_client.py, clients/node/ninja-client.mjs, test/broker-smoketest.sh — all of them
+// clients/broker_client.py and clients/node/ninja-client.mjs — all shipped callers
 // send `Authorization: Bearer <entra-token>`). Treating it as smuggling would 400 all real traffic.
 // It is credential-shaped on the VENDOR leg, so it must not be forwarded — but the correct action is
 // a silent strip, exactly as the pre-refactor broker did, not a rejection.

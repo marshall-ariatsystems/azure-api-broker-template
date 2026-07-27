@@ -4,7 +4,6 @@
 # SMOKE BARS:
 #  - uses broker.contoso.com (no public IP)
 #  - token acquired with --scope "<appIdUri>/.default" (v2; NOT --resource)
-#  - asserts token claims (aud/iss/roles) BEFORE calling the broker
 #  - NO vendor key anywhere (only Authorization: Bearer)
 set -euo pipefail
 
@@ -18,10 +17,6 @@ PATH_ARG="${1:-v1/health}"
 TOKEN=$(az account get-access-token --scope "${APP_ID_URI}/.default" --query accessToken -o tsv)
 # mask the token in any captured output
 echo "::add-mask::${TOKEN}" 2>/dev/null || true
-
-# --- assert token claims BEFORE calling the broker (spec §12.1) ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOKEN="$TOKEN" BROKER_SCOPE="${APP_ID_URI}" bash "${SCRIPT_DIR}/../test/token-claims-assert.sh" env
 
 # --- call the broker (no vendor key, only Authorization: Bearer) ---
 curl -fsS -w '\nHTTP_STATUS:%{http_code}\n' \

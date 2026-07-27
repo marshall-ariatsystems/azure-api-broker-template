@@ -6,7 +6,7 @@
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --check server.mjs"
   },
   "engines": { "node": ">=18" },
   "dependencies": {}

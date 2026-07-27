@@ -47,25 +47,16 @@ provisions live resources.
 ## Testing
 
 ```bash
-# Broker behavioral tests (mocked Azure SDK, real handler)
+# Runtime and package syntax checks
 npm test --prefix function-node
-
-# Bridge and released client surfaces
 npm test --prefix clients/bridge
-node --test clients/node/test/*.test.mjs
-python3 -m unittest clients.test_broker_config clients.test_broker_preflight clients.test_broker_client_integration
+npm test --prefix clients/node
+python3 -m py_compile clients/broker_client.py clients/broker_config.py clients/broker_preflight.py
 dotnet build clients/dotnet/NinjaBrokerClient.csproj --no-restore --nologo -v q
-
-# Gate verifier — artifact + negative-match scans, no Azure creds
-bash test/run-smoke-bars.sh
 ```
 
-`test/run-smoke-bars.sh` must exit 0. Some bars need `az` (for `az bicep build`), `jq`, and
-`python3`; the build-record bar skips on a fresh clone because those records are not published.
-
-New behavior needs a test. If you change role selection, credential scrubbing, or the outbound
-request shape, add a case to `function-node/test/` and a row to
-[`test/acceptance-matrix.md`](test/acceptance-matrix.md). That matrix must stay all-PASS.
+The public distribution repository contains runtime and deployment material. Keep development tests
+and internal validation evidence in the private engineering repository.
 
 ## Coding standards
 
@@ -106,7 +97,7 @@ In the PR description, state:
 1. What changed and why.
 2. The spec section it implements or corrects.
 3. Whether the Node broker, bridge, or a shipped client surface was updated (or why it was not).
-4. That `bash test/run-smoke-bars.sh` passes.
+4. That the published runtime/package validation commands pass.
 
 Run `git diff --cached` before you commit and confirm no key, real GUID, real hostname, or build
 output is in it. See the "Never commit" list in [SECURITY.md](SECURITY.md).

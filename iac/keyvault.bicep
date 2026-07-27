@@ -127,7 +127,7 @@ resource rbacCanary 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 // (Optional) Event Grid subscription on SecretNewVersionCreated — busts the
 // Function cache immediately on rotation (spec §8 — faster than APIM's 4h refresh).
 // Wires to the CacheBust function endpoint.
-// Implemented as a runbook step in identity/grant-revoke-runbook.md and test/rotation-runbook.md
+// Implemented as a runbook step in identity/grant-revoke-runbook.md.
 // so the admin controls the wiring (no surprise subscriptions).
 // https://learn.microsoft.com/en-us/azure/key-vault/general/event-grid-tutorial
 // ----------------------------------------------------------------------------

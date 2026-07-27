@@ -67,11 +67,11 @@ truth. A report should assume these controls are already in place:
 | No caller identity on the vendor leg; it is logged for attribution only | `function-node/src/broker.js` |
 | Network isolation: public access disabled, ingress restricted to your CIDR | `iac/foundation.bicep` |
 
-The operational procedures sit in three runbooks. Prohibited key locations, and what to do when a key
+The operational procedures sit in two runbooks. Prohibited key locations, and what to do when a key
 is suspected exposed, are in
 [`clients/developer-security-runbook.md`](clients/developer-security-runbook.md). Grant, revoke, and
-rotate are in [`identity/grant-revoke-runbook.md`](identity/grant-revoke-runbook.md). The quarterly
-access review, the least-privilege checklist, and offboarding live in
+rotation procedures are in [`identity/grant-revoke-runbook.md`](identity/grant-revoke-runbook.md).
+The quarterly access review, the least-privilege checklist, and offboarding live in
 [`observability/rbac-governance.md`](observability/rbac-governance.md).
 
 ## Never commit

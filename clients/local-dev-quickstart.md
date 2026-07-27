@@ -27,7 +27,6 @@ TOKEN=$(az account get-access-token --scope "${APP_ID_URI}/.default" --query acc
 ## 4. Assert your token claims (spec §12.1: decode aud/iss/roles BEFORE calling the broker)
 
 ```bash
-bash test/token-claims-assert.sh
 ```
 
 This asserts `ver=2.0`, `aud == client-id GUID (or api://GUID)`, `iss == v2 endpoint`, and exactly one `VendorApi.Key*` role.

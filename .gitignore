@@ -33,6 +33,12 @@ nohup.out
 _archive/
 brainstorm/
 
+# Development-only material is maintained outside the public distribution repository.
+**/test/
+**/tests/
+demo/
+examples/
+
 # park: local "where we left off" notes (not committed)
 .park/
 handoffs/
