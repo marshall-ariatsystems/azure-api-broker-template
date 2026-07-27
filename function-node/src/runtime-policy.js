@@ -4,8 +4,8 @@ const { AppConfigurationClient } = require('@azure/app-configuration');
 const { DefaultAzureCredential } = require('@azure/identity');
 const { normalizeEndpointPolicy } = require('./endpoint-policy');
 
-const ROLE_MAP_KEY = 'tessera:broker:role-map';
-const GRANTS_KEY = 'tessera:broker:connection-grants';
+const ROLE_MAP_KEY = 'ariat:broker:role-map';
+const GRANTS_KEY = 'ariat:broker:connection-grants';
 const MAX_BYTES = 64 * 1024;
 
 function parse(value, name) {

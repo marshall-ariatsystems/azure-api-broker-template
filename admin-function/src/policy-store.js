@@ -3,10 +3,10 @@
 const { AppConfigurationClient } = require('@azure/app-configuration');
 const { DefaultAzureCredential } = require('@azure/identity');
 
-const ROLE_MAP_KEY = 'tessera:broker:role-map';
-const GRANTS_KEY = 'tessera:broker:connection-grants';
-const VENDORS_KEY = 'tessera:broker:vendor-profiles';
-const PRINCIPALS_KEY = 'tessera:broker:principal-profiles';
+const ROLE_MAP_KEY = 'ariat:broker:role-map';
+const GRANTS_KEY = 'ariat:broker:connection-grants';
+const VENDORS_KEY = 'ariat:broker:vendor-profiles';
+const PRINCIPALS_KEY = 'ariat:broker:principal-profiles';
 const CONTENT_TYPE = 'application/json';
 const MAX_BYTES = 64 * 1024;
 const OWN = Object.prototype.hasOwnProperty;

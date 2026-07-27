@@ -50,7 +50,7 @@ function config(file) {
   return Object.freeze(value);
 }
 function suffix(value) { return createHash('sha256').update(value).digest('hex').slice(0, 8); }
-function names(input) { const id = suffix(`${input.resourceGroup}:${input.environment}`); return Object.freeze({ suffix: id, vnet: `tessera-${id}-vnet`, broker: `apibkr-${id}-func`, admin: `apibkr-${id}-admin` }); }
+function names(input) { const id = suffix(`${input.resourceGroup}:${input.environment}`); return Object.freeze({ suffix: id, vnet: `ariat-${id}-vnet`, broker: `ariat-${id}-func`, admin: `ariat-${id}-admin` }); }
 function appPayload(displayName, appRoles, redirectUris = []) { return { displayName, signInAudience: 'AzureADMyOrg', identifierUris: [], api: { requestedAccessTokenVersion: 2, oauth2PermissionScopes: [{ adminConsentDescription: 'Access Tessera as the signed-in user.', adminConsentDisplayName: 'Access Tessera', id: randomUUID(), isEnabled: true, type: 'User', userConsentDescription: 'Access Tessera on your behalf.', userConsentDisplayName: 'Access Tessera', value: 'user_impersonation' }] }, appRoles, web: { redirectUris, implicitGrantSettings: { enableIdTokenIssuance: true, enableAccessTokenIssuance: false } } }; }
 function graph(method, path, body, dryRun) { return command('az', ['rest', '--method', method, '--url', `https://graph.microsoft.com/v1.0${path}`, ...(body ? ['--body', JSON.stringify(body)] : [])], { json: true, dryRun }); }
 function createApp(displayName, appRoles, redirectUris, dryRun) {
@@ -77,7 +77,7 @@ function writeState(input, deployment) {
 }
 function packageFunction(directory, dryRun) {
   // Flex Consumption OneDeploy only accepts this exact artifact name.
-  const source = join(root, directory); const output = join(mkdtempSync(join(tmpdir(), 'tessera-package-')), 'released-package.zip');
+  const source = join(root, directory); const output = join(mkdtempSync(join(tmpdir(), 'ariat-package-')), 'released-package.zip');
   command('npm', ['ci', '--omit=dev'], { cwd: source, dryRun });
   const entries = ['host.json', 'package.json', 'package-lock.json', 'src', 'node_modules']; if (existsSync(join(source, 'public'))) entries.push('public');
   command('zip', ['-qr', output, ...entries], { cwd: source, dryRun });
@@ -92,7 +92,7 @@ function deployFunction(resourceGroup, functionName, artifact, storageAccountNam
   // Flex Consumption accepts OneDeploy only. Stage the package privately and
   // pass its short-lived read URL through a parameter file so it never appears
   // in shell history or process listings.
-  const container = 'tessera-onedeploy'; const blob = `${functionName}/released-package.zip`;
+  const container = 'ariat-onedeploy'; const blob = `${functionName}/released-package.zip`;
   if (dryRun) {
     process.stdout.write(`[dry-run] stage ${artifact} as ${container}/${blob} and invoke OneDeploy for ${functionName}\n`);
     return;
@@ -101,7 +101,7 @@ function deployFunction(resourceGroup, functionName, artifact, storageAccountNam
   command('az', ['storage', 'blob', 'upload', '--account-name', storageAccountName, '--container-name', container, '--name', blob, '--file', artifact, '--overwrite', '--content-type', 'application/zip', '--auth-mode', 'login']);
   const expiry = new Date(Date.now() + (60 * 60 * 1000)).toISOString().replace(/\.\d{3}Z$/, 'Z');
   const packageUri = command('az', ['storage', 'blob', 'generate-sas', '--account-name', storageAccountName, '--container-name', container, '--name', blob, '--permissions', 'r', '--expiry', expiry, '--https-only', '--as-user', '--auth-mode', 'login', '--full-uri', '-o', 'tsv']);
-  const parameterFile = join(mkdtempSync(join(tmpdir(), 'tessera-onedeploy-')), 'parameters.json');
+  const parameterFile = join(mkdtempSync(join(tmpdir(), 'ariat-onedeploy-')), 'parameters.json');
   writeFileSync(parameterFile, `${JSON.stringify({ $schema: 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#', contentVersion: '1.0.0.0', parameters: { functionName: { value: functionName }, location: { value: location }, packageUri: { value: packageUri } } })}\n`, { mode: 0o600 });
   try {
     command('az', ['deployment', 'group', 'create', '--name', `onedeploy-${functionName}-${Date.now().toString(36)}`, '--resource-group', resourceGroup, '--template-file', 'iac/deploy-function-package.bicep', '--parameters', `@${parameterFile}`]);
@@ -112,10 +112,10 @@ function deployFunction(resourceGroup, functionName, artifact, storageAccountNam
 }
 function bootstrapPolicy(configName, dryRun) {
   const documents = [
-    ['tessera:broker:role-map', '{}'],
-    ['tessera:broker:connection-grants', '{"version":1,"connections":[]}'],
-    ['tessera:broker:vendor-profiles', '{"version":1,"vendors":[]}'],
-    ['tessera:broker:principal-profiles', '{"version":1,"principals":[]}'],
+    ['ariat:broker:role-map', '{}'],
+    ['ariat:broker:connection-grants', '{"version":1,"connections":[]}'],
+    ['ariat:broker:vendor-profiles', '{"version":1,"vendors":[]}'],
+    ['ariat:broker:principal-profiles', '{"version":1,"principals":[]}'],
   ];
   for (const [key, value] of documents) {
     let last;
@@ -148,7 +148,7 @@ function deploy(input, dryRun) {
   const f = dryRun ? { functionName: name.broker, storageAccountName: '<from-foundation>', keyVaultName: '<from-foundation>', appInsightsConnectionString: '<from-foundation>', identityPrincipalId: '<from-foundation>', functionDefaultHostname: `${name.broker}.azurewebsites.net` } : Object.fromEntries(Object.entries(foundation).map(([k, v]) => [k, v.value]));
   const tenantId = account.tenantId || '<selected-tenant-id>';
   command('az', deploymentArgs(input.resourceGroup, 'iac/auth.bicep', { functionName: f.functionName || name.broker, brokerClientId: brokerIdentity.appId, brokerIssuer: `https://login.microsoftonline.com/${tenantId}/v2.0`, brokerAppIdUri: `api://${brokerIdentity.appId}`, allowedApplications: [], authMode: 'entra' }), { dryRun });
-  const management = command('az', deploymentArgs(input.resourceGroup, 'iac/management.bicep', { namingSuffix: name.suffix, location: input.location, vnetName: name.vnet, integrationSubnetCidr: input.network.adminIntegrationSubnetCidr, privateEndpointSubnetName: `apibkr-${name.suffix}-pe-subnet`, adminPublicNetworkAccess: 'Enabled', appConfigPublicNetworkAccess: 'Enabled', operatorAllowedCidrs: input.operatorAllowedCidrs, storageAccountName: f.storageAccountName, keyVaultName: f.keyVaultName, appInsightsConnectionString: f.appInsightsConnectionString, brokerPrincipalId: f.identityPrincipalId, deployerPrincipalId: deployer.id }), { json: true, dryRun });
+  const management = command('az', deploymentArgs(input.resourceGroup, 'iac/management.bicep', { namingSuffix: name.suffix, location: input.location, vnetName: name.vnet, integrationSubnetCidr: input.network.adminIntegrationSubnetCidr, privateEndpointSubnetName: `ariat-${name.suffix}-pe-subnet`, adminPublicNetworkAccess: 'Enabled', appConfigPublicNetworkAccess: 'Enabled', operatorAllowedCidrs: input.operatorAllowedCidrs, storageAccountName: f.storageAccountName, keyVaultName: f.keyVaultName, appInsightsConnectionString: f.appInsightsConnectionString, brokerPrincipalId: f.identityPrincipalId, deployerPrincipalId: deployer.id }), { json: true, dryRun });
   const m = dryRun ? { adminFunctionName: name.admin, adminHostname: `${name.admin}.azurewebsites.net`, appConfigEndpoint: '<from-management>' } : Object.fromEntries(Object.entries(management).map(([k, v]) => [k, v.value]));
   bootstrapPolicy(m.appConfigName || '<from-management>', dryRun);
   // `sites/config/appsettings` is a replace document in ARM. Use the CLI's
@@ -196,7 +196,7 @@ function manage(positional, options) {
     const roleValue = `VendorApi.${vendorId.replace(/(^|-)[a-z]/g, (part) => part.replace('-', '').toUpperCase())}.Invoke`;
     const app = graph('GET', `/applications(appId='${current.broker.appId}')`, null, false); const roles = Array.isArray(app.appRoles) ? app.appRoles : [];
     if (!roles.some((item) => item.value === roleValue)) graph('PATCH', `/applications/${app.id}`, { appRoles: [...roles, role(roleValue, ['User', 'Application'])] }, false);
-    const secretName = `tessera-${vendorId}`;
+    const secretName = `ariat-${vendorId}`;
     const secretId = command('az', ['keyvault', 'secret', 'set', '--vault-name', current.keyVaultName, '--name', secretName, '--file', options['secret-file'], '--encoding', 'utf-8', '--query', 'id', '-o', 'tsv']);
     command('az', ['role', 'assignment', 'create', '--role', 'Key Vault Secrets User', '--assignee-object-id', current.broker.principalId, '--assignee-principal-type', 'ServicePrincipal', '--scope', secretId]);
     const vendor = api(current, 'vendors', 'POST', { id: vendorId, displayName: options.name, authType: options.auth, baseUrl: options['base-url'] });

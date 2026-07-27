@@ -6,7 +6,7 @@ import test from 'node:test';
 import { main } from '../lib/product.mjs';
 
 test('key plan is local, deterministic, and does not require an Azure command', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'tessera-cli-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'ariat-cli-test-'));
   const state = join(directory, 'state.json');
   writeFileSync(state, JSON.stringify({ admin: { appId: 'public-id', url: 'https://admin.example/console' } }));
   const output = []; const original = process.stdout.write;

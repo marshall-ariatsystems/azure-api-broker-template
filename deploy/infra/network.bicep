@@ -8,7 +8,7 @@ param addressPrefixes array
 param tags object = {}
 
 module vnet '../../iac/modules/isolated-broker-vnet.bicep' = {
-  name: 'tessera-isolated-network'
+  name: 'ariat-isolated-network'
   params: { location: location, vnetName: vnetName, addressPrefixes: addressPrefixes, tags: tags }
 }
 

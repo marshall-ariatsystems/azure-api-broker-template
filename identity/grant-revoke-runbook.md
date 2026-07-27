@@ -85,7 +85,7 @@ az keyvault secret set --vault-name "$KV_NAME" --name "vendor-api-key-team-a" --
 # The Function's 5-min cache TTL picks up the new value on the next refresh.
 # For IMMEDIATE pickup, trigger the Event Grid cache-bust (see test/rotation-runbook.md), or:
 # redeploy the Function (restart clears the in-memory cache).
-az functionapp restart --name "apibkr-optd-func" --resource-group "<rg>"
+az functionapp restart --name "ariat-optd-func" --resource-group "<rg>"
 ```
 
 > Zero-downtime rotation requires the vendor to support overlapping active keys (spec §8). If the vendor allows only one live key, document a brief planned cutover window.
@@ -120,7 +120,7 @@ for this connection` and never spends a vendor call.
 Example — an OpenAI connection limited to chat, embeddings, and model listing:
 
 ```jsonc
-// tessera:broker:role-map  (App Configuration) — or the ROLE_SECRET_MAP app setting
+// ariat:broker:role-map  (App Configuration) — or the ROLE_SECRET_MAP app setting
 {
   "VendorApi.Openai.Invoke": {
     "secret": "openai-key",
@@ -142,7 +142,7 @@ Set it at runtime with no redeploy (the broker's policy cache reloads within
 `POLICY_CACHE_TTL_SECONDS`):
 
 ```bash
-az appconfig kv set --name "<app-config-name>" --key 'tessera:broker:role-map' \
+az appconfig kv set --name "<app-config-name>" --key 'ariat:broker:role-map' \
   --value "$(cat role-map.json)" --yes
 ```
 

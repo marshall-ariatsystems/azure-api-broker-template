@@ -23,7 +23,7 @@ param brokerPrincipalId string
 @description('Object ID of the interactive deployer. Used only to bootstrap empty policy documents through Entra data-plane access.')
 param deployerPrincipalId string
 
-var prefix = 'apibkr-${namingSuffix}'
+var prefix = 'ariat-${namingSuffix}'
 var adminName = '${prefix}-admin'
 var planName = '${prefix}-admin-plan'
 var configName = '${prefix}-cfg'

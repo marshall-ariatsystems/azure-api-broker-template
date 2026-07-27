@@ -8,7 +8,7 @@
 #   ./iac/verify-dependencies-private-endpoints.sh <resource-group> <storage-account-name> <keyvault-name>
 #
 # Example:
-#   ./iac/verify-dependencies-private-endpoints.sh my-rg stg01234567 apibkr-optd-kv
+#   ./iac/verify-dependencies-private-endpoints.sh my-rg stg01234567 ariat-optd-kv
 #
 # Returns: 0 on success (all private endpoints reachable), non-zero on failure.
 

@@ -78,7 +78,7 @@ param brokerSettings object
 // ----------------------------------------------------------------------------
 // Naming convention
 // ----------------------------------------------------------------------------
-var prefix = 'apibkr-${namingSuffix}'
+var prefix = 'ariat-${namingSuffix}'
 var storageName = toLower(replace('st${namingSuffix}${uniqueString(resourceGroup().id)}', '-', ''))
 var funcAppName = '${prefix}-func'
 var appInsightsName = '${prefix}-ai'
@@ -546,7 +546,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     // Managed identity is granted Key Vault Secrets User scoped to ONLY the vendor-key secrets
     // (least privilege, spec §6.1). System-assigned identity principalId is emitted in foundation.bicep
     // outputs and is granted RBAC in keyvault.bicep.
-    KEYVAULT_URI: keyVault.properties.vaultUri // e.g., https://apibkr-optd-kv.vault.azure.net/
+    KEYVAULT_URI: keyVault.properties.vaultUri // e.g., https://ariat-optd-kv.vault.azure.net/
 
     // --- Telemetry (Application Insights instrumentation) ---
     // Function runtime automatically uses this to emit traces and metrics.
