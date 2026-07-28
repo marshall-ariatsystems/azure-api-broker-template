@@ -129,7 +129,9 @@ function doctor(input, dryRun) {
   ensureTooling(dryRun);
   if (input.subscriptionId) command('az', ['account', 'set', '--subscription', input.subscriptionId], { dryRun });
   const account = command('az', ['account', 'show', '-o', 'json'], { json: true, dryRun });
-  for (const provider of ['Microsoft.Web', 'Microsoft.Storage', 'Microsoft.KeyVault', 'Microsoft.AppConfiguration', 'Microsoft.Network', 'Microsoft.Insights']) command('az', ['provider', 'show', '--namespace', provider, '--query', 'registrationState', '-o', 'tsv'], { dryRun });
+  // Microsoft.App is required: Flex Consumption Function Apps run on the Container Apps platform and
+  // their subnet ServiceAssociationLink fails to create if it is not registered.
+  for (const provider of ['Microsoft.Web', 'Microsoft.App', 'Microsoft.Storage', 'Microsoft.KeyVault', 'Microsoft.AppConfiguration', 'Microsoft.Network', 'Microsoft.Insights']) command('az', ['provider', 'show', '--namespace', provider, '--query', 'registrationState', '-o', 'tsv'], { dryRun });
   process.stdout.write(`${dryRun ? 'Dry-run ' : ''}preflight passed for subscription ${account.name || account.id || '<selected>'}.\n`);
   return account;
 }
@@ -148,7 +150,7 @@ function deploy(input, dryRun) {
   const f = dryRun ? { functionName: name.broker, storageAccountName: '<from-foundation>', keyVaultName: '<from-foundation>', appInsightsConnectionString: '<from-foundation>', identityPrincipalId: '<from-foundation>', functionDefaultHostname: `${name.broker}.azurewebsites.net` } : Object.fromEntries(Object.entries(foundation).map(([k, v]) => [k, v.value]));
   const tenantId = account.tenantId || '<selected-tenant-id>';
   command('az', deploymentArgs(input.resourceGroup, 'iac/auth.bicep', { functionName: f.functionName || name.broker, brokerClientId: brokerIdentity.appId, brokerIssuer: `https://login.microsoftonline.com/${tenantId}/v2.0`, brokerAppIdUri: `api://${brokerIdentity.appId}`, allowedApplications: [], authMode: 'entra' }), { dryRun });
-  const management = command('az', deploymentArgs(input.resourceGroup, 'iac/management.bicep', { namingSuffix: name.suffix, location: input.location, vnetName: name.vnet, integrationSubnetCidr: input.network.adminIntegrationSubnetCidr, privateEndpointSubnetName: `ariat-${name.suffix}-pe-subnet`, adminPublicNetworkAccess: 'Enabled', appConfigPublicNetworkAccess: 'Enabled', operatorAllowedCidrs: input.operatorAllowedCidrs, storageAccountName: f.storageAccountName, keyVaultName: f.keyVaultName, appInsightsConnectionString: f.appInsightsConnectionString, brokerPrincipalId: f.identityPrincipalId, deployerPrincipalId: deployer.id }), { json: true, dryRun });
+  const management = command('az', deploymentArgs(input.resourceGroup, 'iac/management.bicep', { namingSuffix: name.suffix, location: input.location, vnetName: name.vnet, integrationSubnetCidr: input.network.adminIntegrationSubnetCidr, privateEndpointSubnetName: `ariat-${name.suffix}-pe-subnet`, deployPrivateEndpoint: input.network.deployPrivateEndpoint !== false, adminPublicNetworkAccess: 'Enabled', appConfigPublicNetworkAccess: 'Enabled', operatorAllowedCidrs: input.operatorAllowedCidrs, storageAccountName: f.storageAccountName, keyVaultName: f.keyVaultName, appInsightsConnectionString: f.appInsightsConnectionString, brokerPrincipalId: f.identityPrincipalId, deployerPrincipalId: deployer.id }), { json: true, dryRun });
   const m = dryRun ? { adminFunctionName: name.admin, adminHostname: `${name.admin}.azurewebsites.net`, appConfigEndpoint: '<from-management>' } : Object.fromEntries(Object.entries(management).map(([k, v]) => [k, v.value]));
   bootstrapPolicy(m.appConfigName || '<from-management>', dryRun);
   // `sites/config/appsettings` is a replace document in ARM. Use the CLI's

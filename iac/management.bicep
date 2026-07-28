@@ -8,6 +8,8 @@ param vnetName string
 param integrationSubnetCidr string = '10.60.3.0/24'
 @description('Existing private-endpoint subnet created by the foundation deployment.')
 param privateEndpointSubnetName string
+@description('When false, the admin and App Config private endpoints are skipped (external virtual-gateway ingress). Public network access plus the operator CIDR restriction remain the enforced controls.')
+param deployPrivateEndpoint bool = true
 @allowed(['Enabled', 'Disabled'])
 @description('Admin public endpoint posture. Enabled is safe only with one or more explicit operator CIDRs; the script rejects an empty allow-list in that mode.')
 param adminPublicNetworkAccess string = 'Enabled'
@@ -102,7 +104,7 @@ resource appConfigDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
     virtualNetwork: { id: vnet.id }
   }
 }
-resource appConfigPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+resource appConfigPe 'Microsoft.Network/privateEndpoints@2024-05-01' = if (deployPrivateEndpoint) {
   name: '${prefix}-pe-cfg'
   location: location
   properties: {
@@ -118,7 +120,7 @@ resource appConfigPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
     ]
   }
 }
-resource appConfigDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
+resource appConfigDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (deployPrivateEndpoint) {
   parent: appConfigPe
   name: 'default'
   properties: {
@@ -199,7 +201,7 @@ resource adminSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   }
 }
 
-resource adminPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+resource adminPe 'Microsoft.Network/privateEndpoints@2024-05-01' = if (deployPrivateEndpoint) {
   name: '${prefix}-pe-admin'
   location: location
   properties: {
@@ -216,7 +218,7 @@ resource adminPe 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   }
 }
 resource azureWebsitesDns 'Microsoft.Network/privateDnsZones@2024-06-01' existing = { name: 'privatelink.azurewebsites.net' }
-resource adminDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
+resource adminDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (deployPrivateEndpoint) {
   parent: adminPe
   name: 'default'
   properties: {
