@@ -155,7 +155,10 @@ module vnetIntegSubnet 'modules/existing-vnet-subnet.bicep' = {
 // are NOT evaluated for private endpoint traffic.
 // https://learn.microsoft.com/en-us/azure/app-service/overview-access-restrictions#how-it-works
 // ----------------------------------------------------------------------------
-module peSubnet 'modules/private-endpoint-subnet.bicep' = if (deployPrivateEndpoint) {
+// The private-endpoint subnet and the Storage/Key Vault DEPENDENCY endpoints are always deployed:
+// the Function worker needs private connectivity to Storage and Key Vault regardless of the INBOUND
+// ingress model. deployPrivateEndpoint only governs the broker's own inbound private endpoint.
+module peSubnet 'modules/private-endpoint-subnet.bicep' = {
   name: 'pe-subnet-${namingSuffix}'
   scope: resourceGroup(existingVnetResourceGroup)
   params: {
@@ -179,13 +182,13 @@ module peSubnet 'modules/private-endpoint-subnet.bicep' = if (deployPrivateEndpo
 // https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-overview
 // https://learn.microsoft.com/en-us/azure/azure-functions/storage-considerations
 // ----------------------------------------------------------------------------
-module dependenciesPe 'modules/dependencies-private-endpoints.bicep' = if (deployPrivateEndpoint) {
+module dependenciesPe 'modules/dependencies-private-endpoints.bicep' = {
   name: 'dependencies-pe-${namingSuffix}'
   scope: resourceGroup(existingVnetResourceGroup)
   params: {
     existingVnetName: existingVnetName
     existingVnetResourceGroup: existingVnetResourceGroup
-    privateEndpointSubnetId: peSubnet!.outputs.subnetId
+    privateEndpointSubnetId: peSubnet.outputs.subnetId
     location: location
     storageAccountId: storage.id
     keyVaultId: keyVault.id
@@ -343,7 +346,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (d
   location: location
   properties: {
     subnet: {
-      id: peSubnet!.outputs.subnetId
+      id: peSubnet.outputs.subnetId
     }
     privateLinkServiceConnections: [
       {
@@ -420,7 +423,7 @@ resource privateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetwor
   properties: {
     registrationEnabled: false // resolution only; this template never registers records for your VMs
     virtualNetwork: {
-      id: peSubnet!.outputs.vnetId
+      id: peSubnet.outputs.vnetId
     }
   }
 }
@@ -624,8 +627,8 @@ output publicNetworkAccess string = publicNetworkAccess
 // Private endpoint (default inbound path; empty when deployPrivateEndpoint = false)
 output privateEndpointEnabled bool = deployPrivateEndpoint
 output privateEndpointName string = deployPrivateEndpoint ? privateEndpoint!.name : ''
-output privateEndpointSubnetId string = deployPrivateEndpoint ? peSubnet!.outputs.subnetId : ''
-output privateEndpointNsgId string = deployPrivateEndpoint ? peSubnet!.outputs.nsgId : ''
+output privateEndpointSubnetId string = deployPrivateEndpoint ? peSubnet.outputs.subnetId : ''
+output privateEndpointNsgId string = deployPrivateEndpoint ? peSubnet.outputs.nsgId : ''
 output privateDnsZoneName string = deployPrivateEndpoint ? privateDnsZone!.name : ''
 // The private IP is deliberately NOT an output: customDnsConfigs comes back empty once a private DNS
 // zone group is attached, so indexing it fails the deployment. Read it after deploy with:
