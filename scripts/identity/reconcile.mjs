@@ -13,6 +13,11 @@ function env(name, fallback = '') {
   return process.env[name] || run('azd', ['env', 'get-value', name], { allowFailure: true }) || fallback;
 }
 function setEnv(name, value) { run('azd', ['env', 'set', name, value]); }
+function uniqueNameFor(kind) {
+  const environment = env('AZURE_ENV_NAME'); const resourceGroup = env('AZURE_RESOURCE_GROUP');
+  if (!environment || !resourceGroup) fail('AZURE_ENV_NAME and AZURE_RESOURCE_GROUP are required; run this through azd');
+  return `api-broker-${resourceGroup}-${environment}-${kind}`;
+}
 function findApp(displayName) {
   const values = run('az', ['ad', 'app', 'list', '--display-name', displayName, '--query', `[?displayName=='${displayName.replaceAll("'", "''")}']`, '-o', 'json'], { json: true });
   if (values.length > 1) fail(`multiple Entra applications are named ${displayName}`);
@@ -22,6 +27,11 @@ function ensureApp(displayName, roles = []) {
   let app = findApp(displayName);
   if (!app) {
     app = run('az', ['ad', 'app', 'create', '--display-name', displayName, '--sign-in-audience', 'AzureADMyOrg', '--app-roles', JSON.stringify(roles), '-o', 'json'], { json: true });
+  }
+  const uniqueName = uniqueNameFor(displayName.includes('Admin') ? 'admin' : 'broker');
+  if (app.uniqueName !== uniqueName) {
+    patchApplication(app.id, { uniqueName });
+    app = run('az', ['ad', 'app', 'show', '--id', app.appId, '-o', 'json'], { json: true });
   }
   const principal = run('az', ['ad', 'sp', 'show', '--id', app.appId, '-o', 'json'], { json: true, allowFailure: true }) || run('az', ['ad', 'sp', 'create', '--id', app.appId, '-o', 'json'], { json: true });
   return { ...app, servicePrincipalId: principal.id };
@@ -42,6 +52,7 @@ function prepare() {
   }
   setEnv('BROKER_CLIENT_ID', broker.appId); setEnv('BROKER_APPLICATION_OBJECT_ID', broker.id); setEnv('BROKER_SERVICE_PRINCIPAL_ID', broker.servicePrincipalId);
   setEnv('ADMIN_CLIENT_ID', admin.appId); setEnv('ADMIN_APPLICATION_OBJECT_ID', admin.id); setEnv('ADMIN_SERVICE_PRINCIPAL_ID', admin.servicePrincipalId);
+  setEnv('OPERATOR_OBJECT_ID', run('az', ['ad', 'signed-in-user', 'show', '--query', 'id', '-o', 'tsv']));
   process.stdout.write('Entra applications reconciled without client credentials.\n');
 }
 function finalize() {

@@ -39,7 +39,9 @@ Open the emitted `AZURE_ADMIN_URL`. The deploying user receives the `Broker.Oper
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fmarshall-ariatsystems%2Fazure-api-broker-template%2Fmain%2Finfra%2Fazuredeploy.json)
 
-The portal artifact provisions infrastructure only. The supported complete path is `azd up` because Azure portal ARM deployment does not run the Entra reconciliation or application-package hooks.
+The portal path is the one-click deployment path. It provisions the infrastructure, creates the broker and admin Entra applications through Microsoft Graph Bicep, assigns the supplied operator object ID to `Broker.Operator`, configures Easy Auth, and deploys the versioned Function packages from the release assets. The first screen asks for the target resource group, environment, tags, and operator object ID. The deploying identity must have Azure deployment permissions plus the least-privileged Microsoft Graph permissions required to create applications, service principals, and the app-role assignment.
+
+The package URI parameters default to the current release assets. For a private fork or an internal release, override `brokerPackageUri` and `adminPackageUri` with public or SAS-backed ZIP URLs. Set either parameter to an empty string when an infrastructure-only deployment is intentional. `azd up` remains the developer-oriented path and continues to run the preflight checks before provisioning.
 
 ## Day-two updates
 

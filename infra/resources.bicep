@@ -6,6 +6,8 @@ param tags object
 param brokerClientId string
 param adminClientId string
 param tenantId string
+param brokerPackageUri string
+param adminPackageUri string
 param brokerMaximumInstances int
 param adminMaximumInstances int
 param alwaysReadyInstances int
@@ -119,6 +121,26 @@ resource admin 'Microsoft.Web/sites@2024-04-01' = {
       }
       deployment: { storage: { type: 'blobContainer', value: '${storage.properties.primaryEndpoints.blob}${adminPackages.name}', authentication: { type: 'SystemAssignedIdentity' } } }
     }
+  }
+}
+
+resource brokerDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!empty(brokerPackageUri)) {
+  name: 'onedeploy'
+  parent: broker
+  #disable-next-line BCP187
+  properties: {
+    packageUri: brokerPackageUri
+    remoteBuild: false
+  }
+}
+
+resource adminDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!empty(adminPackageUri)) {
+  name: 'onedeploy'
+  parent: admin
+  #disable-next-line BCP187
+  properties: {
+    packageUri: adminPackageUri
+    remoteBuild: false
   }
 }
 

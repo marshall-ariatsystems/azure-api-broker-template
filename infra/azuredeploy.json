@@ -1,11 +1,12 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "languageVersion": "2.0",
   "contentVersion": "1.0.0.0",
   "metadata": {
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "12894691243000669895"
+      "templateHash": "3502512067321708776"
     }
   },
   "parameters": {
@@ -26,15 +27,29 @@
     "tags": {
       "type": "object"
     },
-    "brokerClientId": {
-      "type": "string"
-    },
-    "adminClientId": {
-      "type": "string"
-    },
     "tenantId": {
       "type": "string",
       "defaultValue": "[tenant().tenantId]"
+    },
+    "operatorObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Object ID of the first operator to receive the Broker.Operator app role."
+      }
+    },
+    "brokerPackageUri": {
+      "type": "string",
+      "defaultValue": "https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0/broker.zip?download=1",
+      "metadata": {
+        "description": "Public or SAS URL for the broker Function package. Leave empty to provision infrastructure only."
+      }
+    },
+    "adminPackageUri": {
+      "type": "string",
+      "defaultValue": "https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0/admin.zip?download=1",
+      "metadata": {
+        "description": "Public or SAS URL for the admin Function package. Leave empty to provision infrastructure only."
+      }
     },
     "brokerMaximumInstances": {
       "type": "int",
@@ -63,15 +78,102 @@
       }
     }
   },
-  "resources": [
-    {
+  "variables": {
+    "suffix": "[uniqueString(resourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName')), parameters('environmentName'))]",
+    "prefix": "[format('apib-{0}', parameters('environmentName'))]",
+    "adminName": "[take(format('{0}-{1}-admin', variables('prefix'), variables('suffix')), 60)]",
+    "brokerUniqueName": "[format('api-broker-{0}-{1}-broker', parameters('resourceGroupName'), parameters('environmentName'))]",
+    "adminUniqueName": "[format('api-broker-{0}-{1}-admin', parameters('resourceGroupName'), parameters('environmentName'))]",
+    "operatorRoleId": "[guid(tenant().tenantId, parameters('resourceGroupName'), parameters('environmentName'), 'Broker.Operator')]"
+  },
+  "imports": {
+    "MicrosoftGraph": {
+      "provider": "MicrosoftGraph",
+      "version": "1.0.0"
+    }
+  },
+  "resources": {
+    "brokerApplication": {
+      "import": "MicrosoftGraph",
+      "type": "Microsoft.Graph/applications@v1.0",
+      "properties": {
+        "uniqueName": "[variables('brokerUniqueName')]",
+        "displayName": "[format('Azure API Broker {0}', parameters('environmentName'))]",
+        "signInAudience": "AzureADMyOrg"
+      }
+    },
+    "brokerServicePrincipal": {
+      "import": "MicrosoftGraph",
+      "type": "Microsoft.Graph/servicePrincipals@v1.0",
+      "properties": {
+        "appId": "[reference('brokerApplication').appId]"
+      },
+      "dependsOn": [
+        "brokerApplication"
+      ]
+    },
+    "adminApplication": {
+      "import": "MicrosoftGraph",
+      "type": "Microsoft.Graph/applications@v1.0",
+      "properties": {
+        "uniqueName": "[variables('adminUniqueName')]",
+        "displayName": "[format('Azure API Broker Admin {0}', parameters('environmentName'))]",
+        "signInAudience": "AzureADMyOrg",
+        "appRoles": [
+          {
+            "allowedMemberTypes": [
+              "User"
+            ],
+            "description": "Administer API broker connections, grants, branding, and write-only credential rotation.",
+            "displayName": "Broker operator",
+            "id": "[variables('operatorRoleId')]",
+            "isEnabled": true,
+            "value": "Broker.Operator"
+          }
+        ],
+        "web": {
+          "redirectUris": [
+            "[format('https://{0}.azurewebsites.net/.auth/login/aad/callback', variables('adminName'))]"
+          ],
+          "implicitGrantSettings": {
+            "enableIdTokenIssuance": true,
+            "enableAccessTokenIssuance": false
+          }
+        }
+      }
+    },
+    "adminServicePrincipal": {
+      "import": "MicrosoftGraph",
+      "type": "Microsoft.Graph/servicePrincipals@v1.0",
+      "properties": {
+        "appId": "[reference('adminApplication').appId]"
+      },
+      "dependsOn": [
+        "adminApplication"
+      ]
+    },
+    "operatorAssignment": {
+      "import": "MicrosoftGraph",
+      "type": "Microsoft.Graph/appRoleAssignedTo@v1.0",
+      "properties": {
+        "appRoleId": "[variables('operatorRoleId')]",
+        "principalId": "[parameters('operatorObjectId')]",
+        "resourceDisplayName": "[reference('adminApplication').displayName]",
+        "resourceId": "[reference('adminServicePrincipal').id]"
+      },
+      "dependsOn": [
+        "adminApplication",
+        "adminServicePrincipal"
+      ]
+    },
+    "rg": {
       "type": "Microsoft.Resources/resourceGroups",
       "apiVersion": "2024-11-01",
       "name": "[parameters('resourceGroupName')]",
       "location": "[parameters('location')]",
       "tags": "[parameters('tags')]"
     },
-    {
+    "resources": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[format('api-broker-{0}', parameters('environmentName'))]",
@@ -92,10 +194,10 @@
             "value": "[parameters('tags')]"
           },
           "brokerClientId": {
-            "value": "[parameters('brokerClientId')]"
+            "value": "[reference('brokerApplication').appId]"
           },
           "adminClientId": {
-            "value": "[parameters('adminClientId')]"
+            "value": "[reference('adminApplication').appId]"
           },
           "tenantId": {
             "value": "[parameters('tenantId')]"
@@ -108,6 +210,12 @@
           },
           "alwaysReadyInstances": {
             "value": "[parameters('alwaysReadyInstances')]"
+          },
+          "brokerPackageUri": {
+            "value": "[parameters('brokerPackageUri')]"
+          },
+          "adminPackageUri": {
+            "value": "[parameters('adminPackageUri')]"
           }
         },
         "template": {
@@ -117,7 +225,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "900561281605538933"
+              "templateHash": "15713801211838365968"
             }
           },
           "parameters": {
@@ -139,6 +247,12 @@
               "type": "string"
             },
             "tenantId": {
+              "type": "string"
+            },
+            "brokerPackageUri": {
+              "type": "string"
+            },
+            "adminPackageUri": {
               "type": "string"
             },
             "brokerMaximumInstances": {
@@ -417,6 +531,32 @@
                 "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'adminpackages')]",
                 "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('adminName')))]",
                 "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "condition": "[not(empty(parameters('brokerPackageUri')))]",
+              "type": "Microsoft.Web/sites/extensions",
+              "apiVersion": "2022-09-01",
+              "name": "[format('{0}/{1}', variables('brokerName'), 'onedeploy')]",
+              "properties": {
+                "packageUri": "[parameters('brokerPackageUri')]",
+                "remoteBuild": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]"
+              ]
+            },
+            {
+              "condition": "[not(empty(parameters('adminPackageUri')))]",
+              "type": "Microsoft.Web/sites/extensions",
+              "apiVersion": "2022-09-01",
+              "name": "[format('{0}/{1}', variables('adminName'), 'onedeploy')]",
+              "properties": {
+                "packageUri": "[parameters('adminPackageUri')]",
+                "remoteBuild": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]"
               ]
             },
             {
@@ -721,58 +861,84 @@
         }
       },
       "dependsOn": [
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+        "adminApplication",
+        "brokerApplication",
+        "rg"
       ]
     }
-  ],
+  },
   "outputs": {
     "brokerName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerName.value]"
+      "value": "[reference('resources').outputs.brokerName.value]"
     },
     "brokerUrl": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerUrl.value]"
+      "value": "[reference('resources').outputs.brokerUrl.value]"
     },
     "adminName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminName.value]"
+      "value": "[reference('resources').outputs.adminName.value]"
     },
     "adminUrl": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminUrl.value]"
+      "value": "[reference('resources').outputs.adminUrl.value]"
     },
     "storageAccountName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.storageAccountName.value]"
+      "value": "[reference('resources').outputs.storageAccountName.value]"
     },
     "keyVaultName": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.keyVaultName.value]"
+      "value": "[reference('resources').outputs.keyVaultName.value]"
     },
     "AZURE_BROKER_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerName.value]"
+      "value": "[reference('resources').outputs.brokerName.value]"
     },
     "AZURE_BROKER_URL": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerUrl.value]"
+      "value": "[reference('resources').outputs.brokerUrl.value]"
     },
     "AZURE_ADMIN_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminName.value]"
+      "value": "[reference('resources').outputs.adminName.value]"
     },
     "AZURE_ADMIN_URL": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminUrl.value]"
+      "value": "[reference('resources').outputs.adminUrl.value]"
     },
     "AZURE_STORAGE_ACCOUNT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.storageAccountName.value]"
+      "value": "[reference('resources').outputs.storageAccountName.value]"
     },
     "AZURE_KEY_VAULT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.keyVaultName.value]"
+      "value": "[reference('resources').outputs.keyVaultName.value]"
+    },
+    "BROKER_CLIENT_ID": {
+      "type": "string",
+      "value": "[reference('brokerApplication').appId]"
+    },
+    "ADMIN_CLIENT_ID": {
+      "type": "string",
+      "value": "[reference('adminApplication').appId]"
+    },
+    "BROKER_APPLICATION_OBJECT_ID": {
+      "type": "string",
+      "value": "[reference('brokerApplication').id]"
+    },
+    "ADMIN_APPLICATION_OBJECT_ID": {
+      "type": "string",
+      "value": "[reference('adminApplication').id]"
+    },
+    "BROKER_SERVICE_PRINCIPAL_ID": {
+      "type": "string",
+      "value": "[reference('brokerServicePrincipal').id]"
+    },
+    "ADMIN_SERVICE_PRINCIPAL_ID": {
+      "type": "string",
+      "value": "[reference('adminServicePrincipal').id]"
     }
   }
 }
