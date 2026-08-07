@@ -54,6 +54,7 @@ test('encoded separators and dot segments cannot bypass path rules', () => {
   assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models/%2e%2e/secrets' }).allowed, false);
   assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models%2f..%2fsecrets' }).allowed, false);
   assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models%5cadmin' }).allowed, false);
+  assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models/%252e%252e/secrets' }).allowed, false);
 });
 
 test('deny mode is default-allow: only listed endpoints are blocked', () => {

@@ -70,6 +70,15 @@ A connection is usable only when both gates pass:
 
 Administration similarly requires successful Entra authentication and the `Broker.Operator` app role. Assign connection roles and admin roles to users, groups, or service principals in the corresponding Entra enterprise application. Group-overage tokens fail closed; prefer app-role assignments to Entra groups rather than broad raw group claims.
 
+For each new vendor connection, reconcile its enterprise-app role before assigning callers:
+
+```bash
+node scripts/identity/connection-role.mjs plan --vendor example-vendor
+node scripts/identity/connection-role.mjs apply --vendor example-vendor
+```
+
+Assign the resulting app role to an Entra user, group, or service principal, then add the same principal to the connection grant in the console. The UI displays both the role and policy-grant boundary.
+
 ## Credential boundary
 
 - The admin identity can create new Key Vault secret versions but the API never returns their values.
@@ -114,6 +123,7 @@ npm --prefix deploy test
 az bicep build --file infra/main.bicep --stdout >/dev/null
 node --check scripts/preflight.mjs
 node --check scripts/identity/reconcile.mjs
+node --check scripts/identity/connection-role.mjs
 node --check deploy/migrate.mjs
 ```
 

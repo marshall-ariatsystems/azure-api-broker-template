@@ -44,7 +44,7 @@ function normalizePath(subpath) {
   const noQuery = raw.split('?')[0].split('#')[0];
   let decoded;
   try { decoded = decodeURIComponent(noQuery); } catch { fail('endpoint path is invalid'); }
-  if (decoded.includes('\\') || decoded.includes('\0')) fail('endpoint path is invalid');
+  if (decoded.includes('\\') || decoded.includes('\0') || /%(?:2e|2f|5c)/i.test(decoded)) fail('endpoint path is invalid');
   const withSlash = decoded.startsWith('/') ? decoded : `/${decoded}`;
   // Collapse duplicate slashes so "/v1//models" cannot dodge an exact-match rule.
   const normalized = withSlash.replace(/\/{2,}/g, '/');
