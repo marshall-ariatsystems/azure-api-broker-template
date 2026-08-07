@@ -15,7 +15,8 @@ param alwaysReadyInstances int
 var suffix = uniqueString(resourceGroup().id, environmentName)
 var prefix = 'apib-${environmentName}'
 var storageName = take(replace('${prefix}${suffix}', '-', ''), 24)
-var vaultName = take('${prefix}-${suffix}-kv', 24)
+var vaultNameBase = take('${prefix}-${suffix}-kv', 24)
+var vaultName = endsWith(vaultNameBase, '-') ? substring(vaultNameBase, 0, length(vaultNameBase) - 1) : vaultNameBase
 var brokerName = take('${prefix}-${suffix}-broker', 60)
 var adminName = take('${prefix}-${suffix}-admin', 60)
 var entraIssuer = '${environment().authentication.loginEndpoint}${tenantId}/v2.0'
@@ -134,6 +135,7 @@ resource brokerDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!emp
     packageUri: brokerPackageUri
     remoteBuild: true
   }
+  dependsOn: [brokerBlob]
 }
 
 resource adminDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!empty(adminPackageUri)) {
@@ -146,6 +148,7 @@ resource adminDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!empt
     packageUri: adminPackageUri
     remoteBuild: true
   }
+  dependsOn: [adminBlob]
 }
 
 resource brokerSettings 'Microsoft.Web/sites/config@2024-04-01' = {
