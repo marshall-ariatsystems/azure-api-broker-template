@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "1250664516507619664"
+      "templateHash": "12894691243000669895"
     }
   },
   "parameters": {
@@ -117,7 +117,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "5840690096943246044"
+              "templateHash": "900561281605538933"
             }
           },
           "parameters": {
@@ -532,8 +532,14 @@
                 },
                 "globalValidation": {
                   "requireAuthentication": true,
-                  "unauthenticatedClientAction": "RedirectToLoginPage",
-                  "excludedPaths": []
+                  "unauthenticatedClientAction": "Return401",
+                  "excludedPaths": [
+                    "/console",
+                    "/console/app.js",
+                    "/console/style.css",
+                    "/api/v1/config/branding",
+                    "/api/config/branding"
+                  ]
                 },
                 "httpSettings": {
                   "requireHttps": true,

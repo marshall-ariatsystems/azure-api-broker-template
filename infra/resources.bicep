@@ -179,7 +179,11 @@ resource adminAuth 'Microsoft.Web/sites/config@2024-04-01' = {
   name: 'authsettingsV2'
   properties: {
     platform: { enabled: true }
-    globalValidation: { requireAuthentication: true, unauthenticatedClientAction: 'RedirectToLoginPage', excludedPaths: [] }
+    globalValidation: {
+      requireAuthentication: true
+      unauthenticatedClientAction: 'Return401'
+      excludedPaths: ['/console', '/console/app.js', '/console/style.css', '/api/v1/config/branding', '/api/config/branding']
+    }
     httpSettings: { requireHttps: true, forwardProxy: { convention: 'NoProxy' } }
     identityProviders: { azureActiveDirectory: { enabled: true, registration: { openIdIssuer: entraIssuer, clientId: adminClientId }, validation: { allowedAudiences: [adminClientId, 'api://${adminClientId}'], defaultAuthorizationPolicy: { allowedApplications: [], allowedPrincipals: {} } } } }
   }

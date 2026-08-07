@@ -17,7 +17,8 @@
     </a>
     <div class="topbar-right">
       <span id="api-status" class="pill pill-warn">connecting</span>
-      <a class="btn btn-ghost" href="/.auth/logout?post_logout_redirect_uri=/console">Sign out</a>
+      <a id="sign-in" class="btn btn-primary" href="/.auth/login/aad?post_login_redirect_uri=/console">Sign in with Entra</a>
+      <a id="sign-out" class="btn btn-ghost" href="/.auth/logout?post_logout_redirect_uri=/console" hidden>Sign out</a>
     </div>
   </header>
 

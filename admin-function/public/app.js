@@ -96,8 +96,14 @@ async function mutate(path, body, message, method = 'POST') {
 
 async function loadAll() {
   try {
-    const [branding, dashboard, principals, logs] = await Promise.all([api('/config/branding'), api('/dashboard'), api('/principals'), api('/logs')]);
-    applyBranding(branding.branding); state.dashboard = dashboard; state.connections = dashboard.connections || []; state.principals = principals.principals || []; state.events = logs.events || [];
+    const branding = await api('/config/branding'); applyBranding(branding.branding); renderBrandingForm();
+    const identityResponse = await fetch('/.auth/me', { credentials: 'same-origin' });
+    const identities = identityResponse.ok ? await identityResponse.json() : [];
+    const signedIn = Array.isArray(identities) && identities.length > 0;
+    $('sign-in').hidden = signedIn; $('sign-out').hidden = !signedIn;
+    if (!signedIn) { $('api-status').textContent = 'sign in required'; $('api-status').className = 'pill pill-warn'; return; }
+    const [dashboard, principals, logs] = await Promise.all([api('/dashboard'), api('/principals'), api('/logs')]);
+    state.dashboard = dashboard; state.connections = dashboard.connections || []; state.principals = principals.principals || []; state.events = logs.events || [];
     renderOverview(); renderConnections(); renderPrincipals(); renderAudit(); renderBrandingForm();
   } catch (error) { $('api-status').textContent = 'unavailable'; $('api-status').className = 'pill pill-err'; flash(error.message, true); }
 }
