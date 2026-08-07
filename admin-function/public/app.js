@@ -1,7 +1,7 @@
 'use strict';
 
 const API = '/api/v1';
-const state = { dashboard: null, connections: [], principals: [], events: [], branding: null, selected: null };
+const state = { dashboard: null, connections: [], principals: [], events: [], traffic: [], trafficSummary: null, trafficLoaded: false, branding: null, selected: null };
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
@@ -69,6 +69,27 @@ function applyBranding(branding) {
 function principalName(id) { return state.principals.find((item) => item.id === id)?.displayName || id; }
 function connectionById(id) { return state.connections.find((item) => item.id === id); }
 function daysSince(value) { return value ? `${Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 86400000))}d` : 'never'; }
+function statusGroup(status) { return status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'success'; }
+function callerLabel(event) {
+  if (event.callerOid) {
+    const id = `user:${event.callerOid}`;
+    return { name: principalName(id), id };
+  }
+  if (event.callerAzp) {
+    const id = `workload:${event.callerAzp}`;
+    return { name: principalName(id), id };
+  }
+  return { name: 'Unknown caller', id: 'No retained identity' };
+}
+function routeLabel(route) {
+  const [connectionId, ...path] = String(route || '').split('/');
+  const connection = connectionById(connectionId);
+  return { connection: connection?.displayName || connectionId || 'Broker', path: path.length ? `/${path.join('/')}` : '/' };
+}
+function localTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? { time: 'Unknown', date: '' } : { time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), date: date.toLocaleDateString([], { month: 'short', day: 'numeric' }) };
+}
 
 function renderOverview() {
   const metrics = state.dashboard?.metrics || {};
@@ -115,8 +136,89 @@ function renderPrincipals() {
 }
 
 function renderAudit() {
-  $('audit-count').textContent = Math.min(state.events.length, 200);
-  $('audit-list').innerHTML = state.events.length ? state.events.slice(0, 200).map((event) => `<div class="record static"><span><strong>${esc(event.action)}</strong><small>${esc(event.connectionId || event.route || 'Broker control plane')} · ${esc(new Date(event.at).toLocaleString())}</small></span><span class="pill">${esc(event.outcome || event.clientStatus || 'recorded')}</span></div>`).join('') : '<div class="empty-state compact"><span class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11h6M9 15h6M6 3h12a2 2 0 0 1 2 2v16l-4-2-4 2-4-2-4 2V5a2 2 0 0 1 2-2Z"/></svg></span><h3>No retained events</h3><p>Administrative and broker activity will appear here.</p></div>';
+  const events = state.events.filter((event) => event.action !== 'broker.api.call' && event.action !== 'client.api.call');
+  $('audit-count').textContent = Math.min(events.length, 200);
+  $('audit-list').innerHTML = events.length ? events.slice(0, 200).map((event) => `<div class="record static"><span><strong>${esc(event.action)}</strong><small>${esc(event.connectionId || 'Broker control plane')} · ${esc(new Date(event.at).toLocaleString())}</small></span><span class="pill">${esc(event.outcome || 'recorded')}</span></div>`).join('') : '<div class="empty-state compact"><span class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11h6M9 15h6M6 3h12a2 2 0 0 1 2 2v16l-4-2-4 2-4-2-4 2V5a2 2 0 0 1 2-2Z"/></svg></span><h3>No administrative events</h3><p>Connection, credential, grant, principal, and branding changes will appear here.</p></div>';
+}
+
+function renderTraffic() {
+  const summary = state.trafficSummary || { total: 0, errorRate: 0, p95DurationMs: 0, uniqueCallers: 0, hours: Number($('traffic-hours').value), partial: false };
+  $('traffic-total').textContent = summary.total.toLocaleString();
+  $('traffic-error-rate').textContent = `${summary.errorRate}%`;
+  $('traffic-p95').textContent = `${summary.p95DurationMs.toLocaleString()}ms`;
+  $('traffic-callers').textContent = summary.uniqueCallers.toLocaleString();
+  $('traffic-window-label').textContent = summary.hours === 1 ? 'Last hour' : summary.hours === 24 ? 'Last 24 hours' : 'Last 7 days';
+  $('traffic-partial').hidden = !summary.partial;
+
+  const needle = $('traffic-filter').value.trim().toLowerCase();
+  const selectedStatus = $('traffic-status').value;
+  const events = state.traffic.filter((event) => {
+    const caller = callerLabel(event);
+    const matchesStatus = selectedStatus === 'all' || statusGroup(event.status) === selectedStatus;
+    const haystack = `${event.method} ${event.route} ${event.status} ${caller.name} ${caller.id} ${event.role}`.toLowerCase();
+    return matchesStatus && (!needle || haystack.includes(needle));
+  });
+
+  $('traffic-list').innerHTML = events.length ? events.map((event) => {
+    const time = localTime(event.at);
+    const route = routeLabel(event.route);
+    const caller = callerLabel(event);
+    const outcome = statusGroup(event.status);
+    return `<button class="traffic-row" type="button" role="row" data-traffic-id="${esc(event.id)}" aria-label="Inspect ${esc(event.method)} ${esc(event.route)}, status ${esc(event.status)}">
+      <span class="traffic-time" role="cell"><strong>${esc(time.time)}</strong><small>${esc(time.date)}</small></span>
+      <span role="cell"><span class="traffic-method">${esc(event.method || '—')}</span></span>
+      <span class="traffic-route" role="cell"><strong>${esc(route.connection)}</strong><small>${esc(route.path)}</small></span>
+      <span class="traffic-caller" role="cell"><strong>${esc(caller.name)}</strong><small>${esc(caller.id)}</small></span>
+      <span role="cell"><span class="status-code ${outcome}">${esc(event.status)}</span></span>
+      <span class="traffic-latency" role="cell">${esc(event.durationMs)}ms</span>
+      <span class="traffic-open" aria-hidden="true">›</span>
+    </button>`;
+  }).join('') : '<div class="empty-state"><span class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-7M22 18V3"/><path d="M2 21h20"/></svg></span><h3>No matching API calls</h3><p>Try a wider time window or clear the current filters.</p></div>';
+  document.querySelectorAll('[data-traffic-id]').forEach((button) => { button.onclick = () => inspectTraffic(button.dataset.trafficId); });
+}
+
+async function loadTraffic() {
+  if (document.body.dataset.authState !== 'authenticated') return;
+  const target = $('traffic-list');
+  target.innerHTML = '<div class="loading-state"><span></span><p>Loading broker traffic…</p></div>';
+  try {
+    const value = await api(`/traffic?hours=${encodeURIComponent($('traffic-hours').value)}&limit=500`);
+    state.traffic = value.events || [];
+    state.trafficSummary = value.summary || null;
+    state.trafficLoaded = true;
+    renderTraffic();
+  } catch (error) {
+    target.innerHTML = `<div class="empty-state"><span class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg></span><h3>Traffic is unavailable</h3><p>${esc(error.message)}</p></div>`;
+  }
+}
+
+async function inspectTraffic(id) {
+  const dialog = $('traffic-dialog');
+  $('traffic-detail').innerHTML = '<div class="loading-state"><span></span><p>Loading traffic detail…</p></div>';
+  $('traffic-dialog-title').textContent = 'API call';
+  $('traffic-dialog-subtitle').textContent = 'Loading retained metadata…';
+  dialog.showModal();
+  try {
+    const { event } = await api(`/traffic/${encodeURIComponent(id)}`);
+    const route = routeLabel(event.route);
+    const caller = callerLabel(event);
+    const requestBody = event.request.body || 'No request body retained for this call.';
+    const responseBody = event.response.body || 'No response body retained for this call.';
+    $('traffic-dialog-title').textContent = `${event.method} ${route.path}`;
+    $('traffic-dialog-subtitle').textContent = `${route.connection} · ${new Date(event.at).toLocaleString()}`;
+    $('traffic-detail').innerHTML = `<div class="traffic-detail-grid">
+      <div class="traffic-fact"><span>Method</span><strong>${esc(event.method)}</strong></div>
+      <div class="traffic-fact"><span>Status</span><strong><span class="status-code ${statusGroup(event.status)}">${esc(event.status)}</span></strong></div>
+      <div class="traffic-fact"><span>Latency</span><strong>${esc(event.durationMs)}ms</strong></div>
+      <div class="traffic-fact"><span>Route</span><strong title="${esc(event.route)}">${esc(event.route)}</strong></div>
+    </div>
+    <div class="traffic-identity"><div class="traffic-fact"><span>Caller</span><strong>${esc(caller.name)}</strong><code title="${esc(caller.id)}">${esc(caller.id)}</code></div><div class="traffic-fact"><span>Entra role claims</span><code title="${esc(event.role || 'Not retained')}">${esc(event.role || 'Not retained')}</code></div></div>
+    <section class="content-section"><div class="content-head"><div><span>Retained content</span><h3>Request body</h3></div><small class="${event.request.truncated ? 'content-truncated' : ''}">${event.request.truncated ? 'Truncated at 8 KiB' : esc(event.request.contentType || 'No content type')}</small></div><pre class="traffic-content ${event.request.body ? '' : 'empty-content'}">${esc(requestBody)}</pre></section>
+    <section class="content-section"><div class="content-head"><div><span>Scrubbed upstream content</span><h3>Response body</h3></div><small class="${event.response.truncated ? 'content-truncated' : ''}">${event.response.truncated ? 'Truncated at 8 KiB' : 'Credential-shaped fields redacted'}</small></div><pre class="traffic-content ${event.response.body ? '' : 'empty-content'}">${esc(responseBody)}</pre></section>
+    <div class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg><span><strong>Headers and query strings are not retained</strong><small>Credential injection occurs after request validation and is never copied into this record.</small></span></div>`;
+  } catch (error) {
+    $('traffic-detail').innerHTML = `<div class="empty-state compact"><h3>Could not load this call</h3><p>${esc(error.message)}</p></div>`;
+  }
 }
 
 function renderBrandingForm() {
@@ -158,6 +260,7 @@ async function loadAll() {
     setAuthState('authenticated');
     state.dashboard = dashboard; state.connections = dashboard.connections || []; state.principals = principals.principals || []; state.events = logs.events || [];
     renderOverview(); renderConnections(); renderPrincipals(); renderAudit(); renderBrandingForm();
+    if ($('view-traffic').classList.contains('current')) await loadTraffic();
   } catch (error) {
     if (error.status === 401) {
       $('sign-in').hidden = false; $('sign-out').hidden = true;
@@ -199,16 +302,22 @@ function showView(name, moveFocus = false) {
   history.replaceState({}, '', name === 'overview' ? '/console' : `/console#${name}`);
   setNavOpen(false);
   if (moveFocus) $(`title-${name}`)?.focus();
+  if (name === 'traffic' && document.body.dataset.authState === 'authenticated' && !state.trafficLoaded) loadTraffic();
 }
 
 document.querySelectorAll('[data-view]').forEach((button) => { button.onclick = () => showView(button.dataset.view, true); });
 document.querySelectorAll('[data-view-jump]').forEach((button) => { button.onclick = () => showView(button.dataset.viewJump, true); });
 document.querySelectorAll('[data-refresh]').forEach((button) => { button.onclick = loadAll; });
+document.querySelectorAll('[data-refresh-traffic]').forEach((button) => { button.onclick = loadTraffic; });
 $('menu-toggle').onclick = () => setNavOpen(!document.body.classList.contains('nav-open'));
 $('nav-scrim').onclick = () => setNavOpen(false);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && document.body.classList.contains('nav-open')) setNavOpen(false); });
 window.addEventListener('resize', syncNavAccessibility);
 $('connection-filter').oninput = renderConnections; $('connection-status').onchange = renderConnections;
+$('traffic-filter').oninput = renderTraffic;
+$('traffic-status').onchange = renderTraffic;
+$('traffic-hours').onchange = () => { state.trafficLoaded = false; loadTraffic(); };
+$('close-traffic-dialog').onclick = () => $('traffic-dialog').close();
 $('new-connection').onclick = () => $('connection-dialog').showModal();
 $('create-connection').onclick = async (event) => {
   event.preventDefault(); const vendor = $('new-vendor').value.trim().toLowerCase(); const rolePart = vendor.replace(/(^|-)[a-z]/g, (part) => part.replace('-', '').toUpperCase());

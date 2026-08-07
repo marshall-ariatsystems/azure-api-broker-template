@@ -8,6 +8,7 @@ const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { PolicyStore, publicConnections, mutateGrant, vendorIdFor, updateConnectionStatus, recordRotation } = require('./policy-store');
+const traffic = require('./traffic');
 
 const OPERATOR_ROLE = process.env.OPERATOR_ROLE || 'Broker.Operator';
 const API_VERSION = 'v1';
@@ -125,11 +126,33 @@ async function recentAuditEvents(limit = 500) {
   const events = [];
   try {
     for await (const row of auditTable.listEntities()) {
-      events.push({ at: row.at, actor: row.actor || row.callerOid, action: row.action, connectionId: row.connectionId || row.partitionKey, outcome: row.outcome, method: row.method, route: row.route, durationMs: row.durationMs, requestContent: row.requestContent, responseContent: row.responseContent, requestTruncated: row.requestTruncated, responseTruncated: row.responseTruncated, apiPath: row.apiPath, pagePath: row.pagePath, clientStatus: row.clientStatus, clientDurationMs: row.clientDurationMs });
+      events.push({ at: row.at, actor: row.actor || row.callerOid, action: row.action, connectionId: row.connectionId || row.partitionKey, outcome: row.outcome, method: row.method, route: row.route, durationMs: row.durationMs, requestContent: row.requestContent, requestContentType: row.requestContentType, responseContent: row.responseContent, requestTruncated: row.requestTruncated, responseTruncated: row.responseTruncated, callerAzp: row.callerAzp, role: row.role, apiPath: row.apiPath, pagePath: row.pagePath, clientStatus: row.clientStatus, clientDurationMs: row.clientDurationMs });
       if (events.length >= limit) break;
     }
   } catch { return []; }
   return events.filter((event) => typeof event.at === 'string').sort((a, b) => b.at.localeCompare(a.at));
+}
+async function recentTrafficEvents(input) {
+  const options = traffic.query(input);
+  if (!auditTable) return traffic.report([], options);
+  const rows = [];
+  let scanned = 0;
+  let partial = false;
+  const filter = `PartitionKey eq 'broker-call' and RowKey ge '${options.since}'`;
+  try {
+    for await (const row of auditTable.listEntities({ queryOptions: { filter } })) {
+      if (row.action === 'broker.api.call') rows.push(row);
+      scanned += 1;
+      if (scanned >= options.maxScan) { partial = true; break; }
+    }
+  } catch { return traffic.report([], options, { partial: true }); }
+  return traffic.report(rows, options, { partial });
+}
+async function trafficEvent(id) {
+  if (!auditTable) { const error = new Error('not found'); error.status = 404; throw error; }
+  const key = traffic.rowKeyFor(id);
+  try { return traffic.detail(await auditTable.getEntity(key.partitionKey, key.rowKey)); }
+  catch (cause) { if (cause.statusCode === 404) { const error = new Error('not found'); error.status = 404; throw error; } throw cause; }
 }
 function clientCall(input) {
   const apiPath = typeof input.apiPath === 'string' ? input.apiPath : '';
@@ -137,7 +160,7 @@ function clientCall(input) {
   const method = typeof input.method === 'string' ? input.method.toUpperCase() : '';
   const status = Number(input.status);
   const durationMs = Number(input.durationMs);
-  const knownApi = /^\/api\/(?:dashboard|logs|monitoring|vendors|principals|connections(?:\/[^/?#]+(?:\/(?:grants|credential|status))?)?)$/.test(apiPath);
+  const knownApi = /^\/api\/(?:dashboard|logs|monitoring|traffic(?:\/[^/?#]+)?|vendors|principals|connections(?:\/[^/?#]+(?:\/(?:grants|credential|status))?)?)$/.test(apiPath);
   if (!knownApi || !/^\/console(?:\/keys\/[^/?#]+)?$/.test(pagePath) || !['GET', 'POST', 'DELETE'].includes(method) || !Number.isInteger(status) || status < 0 || status > 599 || !Number.isInteger(durationMs) || durationMs < 0 || durationMs > 60000) throw new TypeError('client call is invalid');
   return { apiPath, pagePath, method, status, durationMs };
 }
@@ -198,6 +221,9 @@ async function api(request, context) {
     }
     if (request.method === 'GET' && path === 'logs') return response(200, { events: await recentAuditEvents() });
     if (request.method === 'GET' && path === 'monitoring') return response(200, monitoring(await recentAuditEvents()));
+    if (request.method === 'GET' && path === 'traffic') return response(200, await recentTrafficEvents({ hours: request.query.get('hours'), limit: request.query.get('limit') }));
+    const trafficMatch = /^traffic\/([A-Za-z0-9_-]{1,512})$/.exec(path);
+    if (request.method === 'GET' && trafficMatch) return response(200, { event: await trafficEvent(trafficMatch[1]) });
     if (request.method === 'POST' && path === 'client-events') {
       const event = clientCall(await body(request));
       await audit(actor, 'client.api.call', 'client-call', 'recorded', { apiPath: event.apiPath, pagePath: event.pagePath, method: event.method, clientStatus: String(event.status), clientDurationMs: String(event.durationMs) });

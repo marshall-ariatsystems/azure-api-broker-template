@@ -28,6 +28,20 @@ test('console stylesheet preserves focus, motion, and responsive contracts', asy
   assert.match(css, /min-height: 40px/);
 });
 
+test('traffic inspection exposes filtering, detail, and retention safeguards', async () => {
+  const [html, script] = await Promise.all([readFile(htmlUrl, 'utf8'), readFile(scriptUrl, 'utf8')]);
+
+  assert.match(html, /data-view="traffic"/);
+  assert.match(html, /id="traffic-filter"/);
+  assert.match(html, /id="traffic-status"/);
+  assert.match(html, /id="traffic-hours"/);
+  assert.match(html, /id="traffic-dialog"/);
+  assert.match(html, /Injected credentials and authorization headers are never stored/);
+  assert.match(script, /api\(`\/traffic\?hours=/);
+  assert.match(script, /api\(`\/traffic\/\$\{encodeURIComponent\(id\)\}`\)/);
+  assert.match(script, /Credential injection occurs after request validation and is never copied into this record/);
+});
+
 test('default console colors meet text and control contrast targets', () => {
   const contrast = (foreground, background) => {
     const luminance = (hex) => {

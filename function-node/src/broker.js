@@ -636,7 +636,8 @@ async function brokerRouteHandler(req, ctx) {
     result = await brokerHandler(req, ctx);
   }
   const principal = rolesFromPrincipal(req);
-  recordCall({ request: req, requestContent, result, startedAt, callerOid: principal.oid, callerAzp: principal.azp, route: path }).catch(() => undefined);
+  const vendorRoles = principal.roles.filter((role) => /^VendorApi\.[A-Za-z0-9.-]+\.Invoke$/.test(role));
+  recordCall({ request: req, requestContent, result, startedAt, callerOid: principal.oid, callerAzp: principal.azp, role: vendorRoles.join(','), route: path }).catch(() => undefined);
   return result;
 }
 
