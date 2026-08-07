@@ -97,12 +97,33 @@ public sealed class NinjaBrokerClient
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: dotnet run -- <path> [method] [json-body]");
+            PrintUsage(Console.Error);
             return 2;
+        }
+        if (args[0] is "--help" or "-h" or "help")
+        {
+            PrintUsage(Console.Out);
+            return 0;
+        }
+        if (args[0] is "--version" or "version")
+        {
+            Console.WriteLine("broker-client 0.1.0");
+            return 0;
         }
         try
         {
             var client = new NinjaBrokerClient();
+            if (args[0] == "preflight")
+            {
+                if (args.Length != 2)
+                {
+                    Console.Error.WriteLine("usage: broker-client preflight <route-slug>");
+                    return 2;
+                }
+                var result = await client.PreflightAsync(args[1]);
+                Console.WriteLine($"status={result.Status} correlation-id={result.CorrelationId ?? "none"}");
+                return result.Status is >= 200 and < 300 ? 0 : 1;
+            }
             var method = args.Length > 1 ? new HttpMethod(args[1].ToUpperInvariant()) : HttpMethod.Get;
             var body = args.Length > 2 ? args[2] : null;
             Console.WriteLine(await client.CallAsync(args[0], method, body));
@@ -114,5 +135,29 @@ public sealed class NinjaBrokerClient
             Console.Error.WriteLine(e.Message);
             return 1;
         }
+    }
+
+    private static void PrintUsage(TextWriter writer)
+    {
+        writer.WriteLine("Tessera broker client 0.1.0");
+        writer.WriteLine();
+        writer.WriteLine("Usage:");
+        writer.WriteLine("  broker-client <path> [METHOD] [json-body]");
+        writer.WriteLine("  broker-client preflight <route-slug>");
+        writer.WriteLine("  broker-client --help");
+        writer.WriteLine("  broker-client --version");
+        writer.WriteLine();
+        writer.WriteLine("Required configuration:");
+        writer.WriteLine("  BROKER_BASE   HTTPS broker route root, e.g. https://<broker-host>/api/broker");
+        writer.WriteLine("  BROKER_SCOPE  Broker audience, e.g. api://<broker-app-id>/.default");
+        writer.WriteLine();
+        writer.WriteLine("Authentication uses DefaultAzureCredential. Run 'az login' for local development,");
+        writer.WriteLine("or provide a supported workload identity in CI. Vendor credentials are never supplied");
+        writer.WriteLine("to this client.");
+        writer.WriteLine();
+        writer.WriteLine("Examples:");
+        writer.WriteLine("  broker-client /v2/organizations");
+        writer.WriteLine("  broker-client /v2/webhook PUT '{\"url\":\"https://example.invalid\"}'");
+        writer.WriteLine("  broker-client preflight <vendor-route>");
     }
 }

@@ -127,8 +127,8 @@ az deployment group create \
    in the editor** → **Load file** → pick `iac/foundation.bicep` (the Portal compiles Bicep) → **Save**.
 2. Choose the target **Resource group**, fill the parameters above, **Review + create** → **Create**.
 3. Watch **Deployment → Outputs**. Record `functionName`, `keyVaultName`, `keyVaultUri`, and
-   `identityPrincipalId`; you need all four below. They also land in
-   [`iac/outputs.json`](../iac/outputs.json).
+   `identityPrincipalId`; you need all four below. The supported deployment CLI stores the
+   non-secret identifiers in local, ignored deployment state.
 
 Key posture this sets: **inbound restricted** to your on-prem/VPN CIDR (everything else denied),
 **public network access Disabled**, outbound via VNet integration.

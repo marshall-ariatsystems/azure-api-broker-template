@@ -10,7 +10,7 @@
 // LEAST-PRIVILE CONTROL (spec §6.1, council fix): RBAC is scoped to the specific vendor-key
 // secrets, not the whole vault, so even a compromised broker cannot read unrelated secrets.
 //
-// Inputs (from A1 iac/outputs.json): keyVaultName, identityPrincipalId, identityTenantId.
+// Inputs are emitted to generated local deployment state: keyVaultName and identityPrincipalId.
 // Inputs (from A3 identity/app-roles.json): the roleToSecretName mapping (source of secret names).
 //
 // Microsoft Learn citations:
@@ -22,8 +22,15 @@
 @description('Existing Key Vault name (created in foundation.bicep).')
 param keyVaultName string
 
-@description('Function app system-assigned managed identity principalId (from iac/outputs.json).')
+@description('Function app system-assigned managed identity principalId from generated local deployment state.')
 param functionPrincipalId string
+
+@description('Names of the vendor secrets used by the enabled broker routes.')
+param vendorSecretNames array
+
+@secure()
+@description('Object mapping every vendorSecretNames entry to its value. Supply only at deployment time.')
+param vendorSecretValues object
 
 // ----------------------------------------------------------------------------
 // Existing Key Vault (created in foundation.bicep)
@@ -33,45 +40,18 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
 }
 
 // ----------------------------------------------------------------------------
-// Vendor-key secrets — one per role, names reveal purpose not value (spec §6.1).
-// Values are PLACEHOLDERS: the admin sets the REAL vendor key out-of-band (never in IaC).
-// The IaC only creates the secret slot so RBAC scoping can bind to it.
+// Vendor-key secrets. Names are derived from the route map enabled for this
+// deployment; values are secure deployment parameters and are intentionally
+// neither committed nor written to application settings or deployment output.
 // ----------------------------------------------------------------------------
-resource secretTeamA 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource vendorSecrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [for secretName in vendorSecretNames: {
   parent: kv
-  name: 'vendor-api-key-team-a'
+  name: secretName
   properties: {
-    value: 'REPLACE-WITH-REAL-VENDOR-KEY-A-OUT-OF-BAND' // PLACEHOLDER — admin sets real value; never commit a real key
+    value: vendorSecretValues[secretName]
     contentType: 'text/plain'
   }
-}
-
-resource secretTeamB 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'vendor-api-key-team-b'
-  properties: {
-    value: 'REPLACE-WITH-REAL-VENDOR-KEY-B-OUT-OF-BAND'
-    contentType: 'text/plain'
-  }
-}
-
-resource secretCi 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'vendor-api-key-ci'
-  properties: {
-    value: 'REPLACE-WITH-REAL-VENDOR-KEY-CI-OUT-OF-BAND'
-    contentType: 'text/plain'
-  }
-}
-
-resource secretCanary 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'vendor-api-key-canary'
-  properties: {
-    value: 'REPLACE-WITH-REAL-VENDOR-KEY-CANARY-OUT-OF-BAND'
-    contentType: 'text/plain'
-  }
-}
+}]
 
 // ----------------------------------------------------------------------------
 // LEAST-PRIVILEGE RBAC: Key Vault Secrets User scoped to ONLY the vendor-key secrets.
@@ -81,47 +61,17 @@ resource secretCanary 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
 //   4633458b-17da-40b1-a1bf-6a0c6012aae7
 // https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#key-vault-secrets-user
 // ----------------------------------------------------------------------------
-var keyVaultSecretsUserRoleId = '4633458b-17da-40b1-a1bf-6a0c6012aae7'
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
-resource rbacTeamA 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, functionPrincipalId, secretTeamA.name, 'secrets-user')
-  scope: secretTeamA // SCOPED TO THE SECRET — not the vault (least privilege)
+resource rbacVendorSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (secretName, i) in vendorSecretNames: {
+  name: guid(kv.id, functionPrincipalId, secretName, 'secrets-user')
+  scope: vendorSecrets[i] // SCOPED TO THE SECRET — not the vault (least privilege)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
     principalId: functionPrincipalId
     principalType: 'ServicePrincipal'
   }
-}
-
-resource rbacTeamB 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, functionPrincipalId, secretTeamB.name, 'secrets-user')
-  scope: secretTeamB
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
-    principalId: functionPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource rbacCi 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, functionPrincipalId, secretCi.name, 'secrets-user')
-  scope: secretCi
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
-    principalId: functionPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource rbacCanary 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, functionPrincipalId, secretCanary.name, 'secrets-user')
-  scope: secretCanary
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
-    principalId: functionPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
+}]
 
 // ----------------------------------------------------------------------------
 // (Optional) Event Grid subscription on SecretNewVersionCreated — busts the
@@ -133,6 +83,6 @@ resource rbacCanary 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 // ----------------------------------------------------------------------------
 
 output keyVaultName string = kv.name
-output vendorSecretNames array = [secretTeamA.name, secretTeamB.name, secretCi.name, secretCanary.name]
+output vendorSecretNames array = vendorSecretNames
 output functionPrincipalId string = functionPrincipalId
 output roleAssigned string = 'Key Vault Secrets User (scoped to vendor-key secrets only)'

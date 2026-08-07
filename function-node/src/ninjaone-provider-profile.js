@@ -3,12 +3,6 @@
 const MAX_DOCUMENT_BYTES = 8 * 1024;
 const MAX_STRING_LENGTH = 256;
 const PROFILE_KEYS = new Set(['provider', 'routeSlug', 'authMode', 'audienceShape', 'handoffKind']);
-const FORBIDDEN_TOPOLOGY = Object.freeze([
-  'func-broker-cxapi-csb2cscrdcdka3fy.' + 'centralus-01.azurewebsites.net',
-  '10.0.0.' + '10',
-  'ce485d55-f7af-40a8-b9d3-' + '12dd64252740',
-]);
-
 function fail(message) { throw new TypeError(message); }
 function string(value, message) {
   if (typeof value !== 'string' || !value || value.length > MAX_STRING_LENGTH) fail(message);
@@ -21,7 +15,7 @@ function exactKeys(value) {
   if (keys.some((key) => /secret|token|api[-_]?key|password|credential/i.test(key))) fail('profile contains a credential-shaped field');
 }
 function noTopology(value) {
-  if (FORBIDDEN_TOPOLOGY.some((literal) => value.includes(literal))) fail('profile contains forbidden topology');
+  if (/\.azurewebsites\.net\b|\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})\b/i.test(value)) fail('profile contains forbidden topology');
   return value;
 }
 

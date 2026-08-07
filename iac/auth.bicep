@@ -16,17 +16,20 @@
 // - Configure Microsoft Entra authentication: https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-provider-aad
 // - Access user identity / client principal: https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-user-identities
 
-@description('Function app name (from iac/outputs.json).')
+@description('Function app name from the generated local deployment state.')
 param functionName string
 
-@description('Broker app registration client-id GUID (from identity/outputs.json; substitute real value at deploy time). PLACEHOLDER.')
+@description('Broker app registration client-id GUID from the generated local deployment state.')
 param brokerClientId string = '00000000-0000-0000-0000-000000000000'
 
-@description('Broker v2 issuer (from identity/outputs.json). Must end with /v2.0.')
+@description('Broker v2 issuer from the generated local deployment state. Must end with /v2.0.')
 param brokerIssuer string = 'https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0'
 
-@description('Broker App ID URI (from identity/outputs.json). Accepted alongside the GUID audience.')
+@description('Broker App ID URI from the generated local deployment state. Accepted alongside the GUID audience.')
 param brokerAppIdUri string = 'api://00000000-0000-0000-0000-000000000000'
+
+@description('Client application IDs explicitly allowed to obtain tokens accepted by the broker. Supply the existing allow-list at deployment time; an empty array permits no applications.')
+param allowedApplications array = []
 
 @description('Unauthenticated paths that bypass Easy Auth (e.g., /api/health for availability probes). CAUTION: exposes an endpoint; disabled by default. Set to specific paths only if required.')
 param excludedAuthPaths array = []
@@ -77,17 +80,16 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
         registration: {
           openIdIssuer: brokerIssuer // v2 issuer (spec §4.2)
           clientId: brokerClientId
-          // Allowed token audiences: BOTH the GUID and the api:// URI (spec §4.1, §4.2)
-          allowedAudiences: [
-            brokerClientId
-            brokerAppIdUri
-          ]
         }
         validation: {
           allowedAudiences: [
             brokerClientId
             brokerAppIdUri
           ]
+          defaultAuthorizationPolicy: {
+            allowedApplications: allowedApplications
+            allowedPrincipals: {}
+          }
           jwtClaimChecks: {
             // Optional: require the roles claim at the platform too (defense in depth; code also enforces).
             // The broker code rejects zero/multi-role tokens (spec §5.1), so this is supplementary.

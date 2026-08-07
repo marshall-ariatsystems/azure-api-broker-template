@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Azure API Broker</title>
+  <link id="brand-favicon" rel="icon" href="data:,">
+  <link rel="stylesheet" href="/console/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/console" aria-label="Broker home">
+      <img id="brand-logo" alt="" hidden>
+      <span id="brand-name">Azure API Broker</span>
+      <span class="brand-sub">control plane</span>
+    </a>
+    <div class="topbar-right">
+      <span id="api-status" class="pill pill-warn">connecting</span>
+      <a id="sign-in" class="btn btn-primary" href="/.auth/login/aad?post_login_redirect_uri=/console">Sign in with Entra</a>
+      <a id="sign-out" class="btn btn-ghost" href="/.auth/logout?post_logout_redirect_uri=/console" hidden>Sign out</a>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidebar" aria-label="Primary">
+      <button class="nav-item active" data-view="overview">Overview</button>
+      <button class="nav-item" data-view="connections">Credentials &amp; routes</button>
+      <button class="nav-item" data-view="principals">Users, groups &amp; apps</button>
+      <button class="nav-item" data-view="audit">Audit</button>
+      <button class="nav-item" data-view="branding">Branding</button>
+      <div class="sidebar-links">
+        <a id="docs-link" hidden>Documentation</a>
+        <a id="support-link" hidden>Support</a>
+      </div>
+    </nav>
+
+    <main>
+      <div id="flash" class="flash" role="status" hidden></div>
+
+      <section class="view current" id="view-overview">
+        <div class="page-head"><div><h1>Broker overview</h1><p>Entra-authorized API access backed by credentials that remain in Key Vault.</p></div><button class="btn btn-ghost" data-refresh>Refresh</button></div>
+        <div class="metrics">
+          <article><strong id="metric-active">—</strong><span>Active routes</span></article>
+          <article><strong id="metric-disabled">—</strong><span>Disabled routes</span></article>
+          <article><strong id="metric-users">—</strong><span>Granted users</span></article>
+          <article><strong id="metric-rotation">—</strong><span>Oldest rotation</span></article>
+        </div>
+        <article class="card"><h2>Authorization boundary</h2><p>Every call needs both an Entra app-role assignment and an exact connection grant. The broker injects the mapped Key Vault value only after both gates pass.</p><div id="connection-summary" class="stack"></div></article>
+      </section>
+
+      <section class="view" id="view-connections">
+        <div class="page-head"><div><h1>Credentials &amp; routes</h1><p>Define upstream routes, rotate credentials write-only, and assign permitted callers.</p></div><button id="new-connection" class="btn btn-primary">Add route</button></div>
+        <div class="split"><article class="card"><div class="filter-row"><input id="connection-filter" type="search" placeholder="Filter routes"><select id="connection-status"><option value="all">All states</option><option value="active">Active</option><option value="disabled">Disabled</option></select></div><div id="connections-list" class="records"></div></article><article class="card detail" id="connection-detail"><p class="empty">Select a route to manage its Key Vault credential and access grants.</p></article></div>
+      </section>
+
+      <section class="view" id="view-principals">
+        <div class="page-head"><div><h1>Users, groups &amp; applications</h1><p>Friendly labels for Entra object IDs used in connection grants.</p></div></div>
+        <article class="card"><form id="principal-form" class="inline-form"><select id="principal-kind"><option value="user">User</option><option value="group">Group</option><option value="workload">Application</option></select><input id="principal-object-id" required placeholder="Entra object ID"><input id="principal-name" required placeholder="Display name"><button class="btn btn-primary">Save principal</button></form><div id="principals-list" class="records"></div></article>
+      </section>
+
+      <section class="view" id="view-audit">
+        <div class="page-head"><div><h1>Audit</h1><p>Redacted administrative and broker delivery events.</p></div><button class="btn btn-ghost" data-refresh>Refresh</button></div>
+        <article class="card"><div id="audit-list" class="records"></div></article>
+      </section>
+
+      <section class="view" id="view-branding">
+        <div class="page-head"><div><h1>Branding</h1><p>Safe runtime branding survives application and infrastructure updates.</p></div></div>
+        <article class="card narrow"><form id="branding-form">
+          <label>Product name<input id="branding-product" required maxlength="80"></label>
+          <label>Short name<input id="branding-short" required maxlength="80"></label>
+          <label>Logo URL<input id="branding-logo" type="url" placeholder="https://…"></label>
+          <label>Favicon URL<input id="branding-favicon" type="url" placeholder="https://…"></label>
+          <label>Documentation URL<input id="branding-docs" type="url" placeholder="https://…"></label>
+          <label>Support URL<input id="branding-support" type="url" placeholder="https://…"></label>
+          <div class="color-grid"><label>Background<input id="color-background" type="color"></label><label>Surface<input id="color-surface" type="color"></label><label>Accent<input id="color-accent" type="color"></label><label>Text<input id="color-text" type="color"></label></div>
+          <button class="btn btn-primary">Save branding</button>
+        </form></article>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="connection-dialog"><form method="dialog" id="connection-form"><div class="dialog-head"><h2>Add a broker route</h2><button value="cancel" class="btn btn-ghost" aria-label="Close">Close</button></div><label>Vendor ID<input id="new-vendor" required pattern="[a-z0-9][a-z0-9-]{0,63}" placeholder="ninjaone"></label><label>Display name<input id="new-display" required maxlength="128"></label><label>Upstream base URL<input id="new-base-url" required type="url" placeholder="https://api.vendor.example"></label><label>Injection mode<select id="new-inject"><option value="header">API key header</option><option value="bearer">Bearer token</option><option value="basic">Basic credentials</option><option value="oauth2cc">OAuth client credentials</option><option value="entra">Managed identity token</option></select></label><label>Key Vault secret name<input id="new-secret" required pattern="[0-9A-Za-z-]{1,127}"></label><div class="dialog-actions"><button value="cancel" class="btn btn-ghost">Cancel</button><button id="create-connection" value="default" class="btn btn-primary">Create route</button></div></form></dialog>
+  <script src="/console/app.js" defer></script>
+</body>
+</html>

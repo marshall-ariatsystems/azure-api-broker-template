@@ -8,7 +8,7 @@
 // Credential-shaped fields are always rejected (not silently dropped) to surface smuggling attempts
 // and ensure logging clarity.
 
-const sdk = require('../../sdk');
+const sdk = require('@tessera/build-sdk');
 
 // The shared set is the canonical base. This local copy is only extended with
 // deployment-configured injection names at startup.

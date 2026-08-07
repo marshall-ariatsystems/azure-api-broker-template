@@ -1,0 +1,18 @@
+{
+  "name": "azure-api-broker-admin",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Entra-governed operator console for Azure API Broker connections.",
+  "main": "src/admin.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "sh -c 'for file in src/*.js public/*.js; do node --check \"$file\"; done && node --test src/*.test.mjs'"
+  },
+  "dependencies": {
+    "@azure/app-configuration": "^1.8.0",
+    "@azure/data-tables": "^13.3.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0"
+  }
+}

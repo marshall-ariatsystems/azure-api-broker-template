@@ -1,0 +1,16 @@
+{
+  "$schema": "./config.schema.json",
+  "subscriptionId": "<azure-subscription-id>",
+  "resourceGroup": "<new-or-existing-resource-group-name>",
+  "location": "<azure-region>",
+  "environment": "production",
+  "operatorAllowedCidrs": ["<operator-public-ip-or-cidr>"],
+  "network": {
+    "mode": "isolated",
+    "addressPrefixes": ["10.80.0.0/16"],
+    "integrationSubnetCidr": "10.80.1.0/24",
+    "privateEndpointSubnetCidr": "10.80.2.0/24",
+    "adminIntegrationSubnetCidr": "10.80.3.0/24"
+  },
+  "tags": { "application": "tessera", "environment": "production" }
+}

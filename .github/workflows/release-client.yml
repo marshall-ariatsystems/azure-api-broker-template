@@ -63,7 +63,7 @@ jobs:
           result=$?
           set -e
           test "$result" -eq 2
-          grep -F 'usage: dotnet run -- <path>' /tmp/broker-client-output
+          grep -F 'broker-client <path> [METHOD] [json-body]' /tmp/broker-client-output
 
       - name: Assert packaged architecture
         if: matrix.expected_arch

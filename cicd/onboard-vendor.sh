@@ -22,7 +22,7 @@
 # Secret material is read from the ENVIRONMENT only (never CLI args) and never echoed.
 set -euo pipefail
 
-# ---- required: broker instance (from iac/outputs.json + identity/outputs.json) ------------------
+# ---- required: broker instance (from generated local deployment state) ---------------------------
 : "${SUBSCRIPTION:?subscription id}"
 : "${RESOURCE_GROUP:?broker resource group}"
 : "${FUNCTION_APP:?function app name}"

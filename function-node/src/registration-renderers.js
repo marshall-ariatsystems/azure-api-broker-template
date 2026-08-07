@@ -1,6 +1,6 @@
 'use strict';
 const { canonicalJson, verifyRegistrationPackage, inspectRegistrationPackage } = require('./registration-packages');
-const { deepFreeze } = require('../../sdk');
+const { deepFreeze } = require('@tessera/build-sdk');
 function common(raw, options, handoffKind) { const { package: p } = verifyRegistrationPackage(raw, options); return { p, brokerContract: { issuer: p.discovery.issuer, audience: p.resource.audience, claimMap: { roles: p.claims.roles, groups: p.claims.groups }, assurance: p.assurance }, identityIntegration: { id: 'idp:' + p.id.slice(7), kind: 'generic-oidc', handoffKind, displayName: p.displayName, issuer: p.discovery.issuer, status: 'pending' } }; }
 function renderMarketplaceInstallation(raw, options) { const { p, brokerContract, identityIntegration } = common(raw, options, 'marketplace'); return deepFreeze({ kind: 'marketplace-catalog-installation', brokerContract, identityIntegration, catalog: { displayName: p.displayName, redirectUris: p.redirectUris, audience: p.resource.audience, requestedClaims: p.claims, assurance: p.assurance } }); }
 function renderPrivateRegistration(raw, options) { const { p, brokerContract, identityIntegration } = common(raw, options, 'private'); return deepFreeze({ kind: 'private-registration-document', brokerContract, identityIntegration, steps: [...p.bootstrap, 'Issuer: ' + p.discovery.issuer, 'Redirect URIs: ' + p.redirectUris.join(', '), 'Audience: ' + p.resource.audience] }); }

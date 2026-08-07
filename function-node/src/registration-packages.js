@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
 const { requireObject, rejectUnknownKeys } = require('./schema-utils');
-const { canonicalJson, deepFreeze } = require('../../sdk');
+const { canonicalJson, deepFreeze } = require('@tessera/build-sdk');
 const MAX_BYTES = 64 * 1024, PREFIX = 'registration package validation failed: ';
 const SECRET_KEY = /secret|password|token|credential|private[_-]?key|api[_-]?key|client[_-]?secret|refresh/i;
 const SECRET_VALUE = /-----BEGIN|client_secret=|secret=|offline_access|(^|[^A-Za-z])Bearer\s+[A-Za-z0-9._~+/-]{16,}|eyJ[A-Za-z0-9_-]{14,}\.[A-Za-z0-9_-]{6,}\./;

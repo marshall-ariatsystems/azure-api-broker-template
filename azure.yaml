@@ -1,0 +1,26 @@
+name: azure-api-broker-template
+metadata:
+  template: azure-api-broker-template@0.1.0
+infra:
+  provider: bicep
+  path: infra
+services:
+  broker:
+    project: ./function-node
+    host: function
+    language: js
+    resourceName: ${AZURE_BROKER_NAME}
+  admin:
+    project: ./admin-function
+    host: function
+    language: js
+    resourceName: ${AZURE_ADMIN_NAME}
+hooks:
+  preprovision:
+    shell: sh
+    run: |
+      node scripts/preflight.mjs
+      node scripts/identity/reconcile.mjs prepare
+  postprovision:
+    shell: sh
+    run: node scripts/identity/reconcile.mjs finalize

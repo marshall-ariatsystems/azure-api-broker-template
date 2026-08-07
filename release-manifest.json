@@ -1,0 +1,12 @@
+{
+  "product": "azure-api-broker-template",
+  "release": "0.1.0",
+  "apiVersions": ["v1"],
+  "policySchema": { "minimum": 1, "maximum": 1 },
+  "services": {
+    "broker": { "source": "function-node", "independentlyDeployable": true },
+    "admin": { "source": "admin-function", "independentlyDeployable": true }
+  },
+  "migrationCommand": "node deploy/migrate.mjs plan --account <storage-account>",
+  "secretValuesMigrated": false
+}

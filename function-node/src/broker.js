@@ -23,7 +23,10 @@ const genericOidcAuthority = require('./generic-oidc-authority');
 const { validateOidcAccessToken } = require('./oidc-identity-adapter');
 const { buildRouteTable, parseSecretCacheTtlSeconds } = require('./role-routing');
 const { runPreflight, safeLogLine } = require('./preflight');
-const sdk = require('../../sdk');
+const { normalizeEndpointPolicy, evaluateEndpointPolicy } = require('./endpoint-policy');
+const { recordCall, captureRequestContent } = require('./api-call-audit');
+const { createRuntimePolicy } = require('./runtime-policy');
+const sdk = require('@tessera/build-sdk');
 
 const KEYVAULT_URI = process.env.KEYVAULT_URI;
 const VENDOR_BASE_URL = (process.env.VENDOR_BASE_URL || '').replace(/\/+$/, '');
@@ -56,21 +59,36 @@ function loadRoleMap() {
   return DEFAULT_ROLE_MAP;
 }
 const ROLE_TO_SECRET = Object.freeze(loadRoleMap());
-const azureReferenceAuthority = createAzureReferenceAdapter(ROLE_TO_SECRET);
+const runtimePolicy = createRuntimePolicy();
 // Normalize a map entry to { secret, baseUrl, inject } with global fallbacks.
 // `entra` is intentionally secretless: the Function workload identity mints the token.
-function vendorForRole(role) {
-  const entry = ROLE_TO_SECRET[role];
-  if (typeof entry === 'string') return { secret: entry, baseUrl: VENDOR_BASE_URL, inject: INJECT_MODE };
+function vendorForRole(role, roleMap = ROLE_TO_SECRET) {
+  const entry = roleMap[role];
+  if (typeof entry === 'string') return { secret: entry, baseUrl: VENDOR_BASE_URL, inject: INJECT_MODE, enabled: true, endpoints: null };
   return {
     secret: entry.secret,
+    enabled: entry.enabled !== false,
     baseUrl: (entry.baseUrl || VENDOR_BASE_URL).replace(/\/+$/, ''),
     inject: (entry.inject || INJECT_MODE).toLowerCase(),
     tokenUrl: entry.tokenUrl,
     scope: entry.scope,
     idField: entry.idField,
     secretField: entry.secretField,
+    // Optional per-endpoint lockdown. A malformed policy fails closed at request time (the
+    // connection is treated as fully locked), never as unrestricted.
+    endpoints: normalizeEndpointPolicyOrClosed(entry.endpoints),
   };
+}
+
+// Never let a malformed policy widen access: parse failure yields a sentinel that
+// evaluateEndpointPolicy treats as deny-all, not the null "unrestricted" policy.
+const MALFORMED_ENDPOINT_POLICY = Object.freeze({ malformed: true });
+function normalizeEndpointPolicyOrClosed(raw) {
+  try {
+    return normalizeEndpointPolicy(raw);
+  } catch {
+    return MALFORMED_ENDPOINT_POLICY;
+  }
 }
 
 // --- vendor-named routing ----------------------------------------------------------------------
@@ -82,7 +100,6 @@ function vendorForRole(role) {
 // only by Enterprise App app-role assignments; naming a vendor you were not assigned still 403s.
 // Slug = the middle segment of the role value, lowercased (VendorApi.Graph.Invoke -> "graph"); a
 // "route" field on a ROLE_SECRET_MAP entry overrides it.
-const { slugToRole: SLUG_TO_ROLE } = buildRouteTable(ROLE_TO_SECRET);
 // OFF by default = spec §3c preserved exactly (EXACT one-role match, multi/zero -> 403). Set to
 // true ONLY when you intend one Entra identity to hold several vendor roles and pick per request
 // via /broker/<vendor>/... — this is the deliberate relaxation of the "one token = one key"
@@ -203,7 +220,7 @@ function identityForGrants({ oid, azp }, evidence) {
 }
 const OWNED = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
-async function brokerHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, normalizedEvidence } = {}) {
+async function brokerHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, readRuntimePolicy = () => runtimePolicy.read(), normalizedEvidence } = {}) {
     if (!secretClient) return { status: 500, jsonBody: { error: 'KEYVAULT_URI not configured' } };
     let genericEvidence = normalizedEvidence;
 
@@ -231,13 +248,24 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
       } catch { return { status: 401, jsonBody: { error: 'invalid generic bearer' } }; }
     }
 
+    let activePolicy;
+    try {
+      activePolicy = await readRuntimePolicy();
+    } catch (error) {
+      ctx.error(`[broker] runtime-policy-unavailable: ${error.message}`);
+      return { status: 503, jsonBody: { error: 'broker policy unavailable' } };
+    }
+    const roleToSecret = activePolicy?.roleMap || ROLE_TO_SECRET;
+    const authority = createAzureReferenceAdapter(roleToSecret);
+    const { slugToRole } = buildRouteTable(roleToSecret);
+    const grantsSource = activePolicy ? () => activePolicy.grantsJson : readConnectionGrants;
     const startedAt = Date.now();
     // 1. Select the vendor role. Vendor-named path wins; otherwise the legacy exactly-one rule.
     const { roles, claimTypes, oid, azp } = rolesFromPrincipal(req);
-    const held = new Set(roles.filter((r) => ROLE_TO_SECRET[r]));
+    const held = new Set(roles.filter((r) => roleToSecret[r]));
     const rawPath = req.params.path || '';
     const segs = rawPath.split('/').filter(Boolean);
-    const namedRole = segs.length ? SLUG_TO_ROLE[segs[0].toLowerCase()] : undefined;
+    const namedRole = segs.length ? slugToRole[segs[0].toLowerCase()] : undefined;
     let selectedRole;
     let subpath;
     if (namedRole && MULTI_ROLE_VENDOR_ROUTING) {
@@ -272,7 +300,11 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
       selectedRole = single[0];
       subpath = rawPath;
     }
-    const vendor = vendorForRole(selectedRole);
+    const vendor = vendorForRole(selectedRole, roleToSecret);
+    if (!vendor.enabled) {
+      ctx.log(`[broker] DENY oid=${oid} azp=${azp} role=${selectedRole} connection disabled (403)`);
+      return { status: 403, jsonBody: { error: 'connection is disabled' } };
+    }
     const secretName = vendor.secret;
     if (!secretName && vendor.inject !== 'entra') {
       ctx.error(`ROLE_SECRET_MAP entry for ${selectedRole} has no secret name`);
@@ -287,11 +319,11 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
     let authorityResult;
     try {
       const identity = hostedAuthority.normalizeIdentity({ oid, azp, roles });
-      const connection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+      const connection = authority.connectionForRole(selectedRole, vendor);
       authorityResult = hostedAuthority.authorizeConnection({
         identity,
         connection,
-        policy: azureReferenceAuthority.policy,
+        policy: authority.policy,
       });
     } catch {
       authorityResult = { allowed: false };
@@ -305,12 +337,12 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
     // effective on the next call without a handler rebuild or credential rotation.
     let grants;
     try {
-      const rawGrants = readConnectionGrants();
+      const rawGrants = grantsSource();
       grants = connectionGrants.parseConnectionGrants(rawGrants, {
-        knownConnectionIds: azureReferenceAuthority.connectionIds,
+        knownConnectionIds: authority.connectionIds,
       });
     } catch {
-      const grantConnection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+      const grantConnection = authority.connectionForRole(selectedRole, vendor);
       ctx.log(`[broker] grant-config-invalid connection=${grantConnection.id}`);
       return { status: 403, jsonBody: { error: 'connection access denied' } };
     }
@@ -318,15 +350,24 @@ async function brokerHandler(req, ctx, { readConnectionGrants = () => process.en
     try {
       grantResult = connectionGrants.authorizeGrant({
         identity: identityForGrants({ oid, azp }, genericEvidence),
-        connection: azureReferenceAuthority.connectionForRole(selectedRole, vendor),
+        connection: authority.connectionForRole(selectedRole, vendor),
         grants,
       });
     } catch {
       grantResult = { allowed: false, reason: 'denied' };
     }
-    const grantConnection = azureReferenceAuthority.connectionForRole(selectedRole, vendor);
+    const grantConnection = authority.connectionForRole(selectedRole, vendor);
     ctx.log(`[broker] grant connection=${grantConnection.id} grant=${grantResult.allowed ? 'allowed' : 'denied'}`);
     if (!grantResult.allowed) return { status: 403, jsonBody: { error: 'connection access denied' } };
+
+    // 1b. Per-endpoint lockdown. Evaluated after identity/grant checks but BEFORE quota and Key
+    //     Vault, so a locked-down path is rejected without spending KV throughput or a vendor call.
+    //     No policy on the connection = unrestricted (back-compat); a malformed policy fails closed.
+    const endpointDecision = evaluateEndpointPolicy(vendor.endpoints, { method: req.method, subpath });
+    if (!endpointDecision.allowed) {
+      ctx.log(`[broker] DENY oid=${oid} azp=${azp} role=${selectedRole} endpoint=${req.method} ${subpath || '/'} (${endpointDecision.reason}) (403)`);
+      return { status: 403, jsonBody: { error: 'endpoint not permitted for this connection' } };
+    }
 
     // 2. Enforce the distributed per-caller and per-key quota (spec §9) BEFORE touching Key Vault.
     //    Ordering matters: a caller flooding the broker would otherwise drive one Key Vault request
@@ -518,7 +559,7 @@ function createBrokerHandler(dependencies) {
 // This is deliberately a separate, credential-free boundary.  Do not call brokerHandler here:
 // its startup checks and downstream path include quota, Key Vault, managed-identity, and vendor
 // work, none of which belongs in an authorization proof.
-async function preflightHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, idSource = { next: () => crypto.randomUUID() } } = {}) {
+async function preflightHandler(req, ctx, { readConnectionGrants = () => process.env.CONNECTION_GRANTS_JSON, readRuntimePolicy = () => runtimePolicy.read(), idSource = { next: () => crypto.randomUUID() } } = {}) {
   const unauthenticated = () => {
     const result = runPreflight({ callerCorrelationId: req.headers.get('x-correlation-id'), idSource, counters: { kv: 0, vendor: 0, oauth: 0, fetch: 0 } });
     ctx.log(`[broker] ${safeLogLine(result)}`);
@@ -548,11 +589,16 @@ async function preflightHandler(req, ctx, { readConnectionGrants = () => process
     } catch { return unauthenticated(); }
   }
 
+  let activePolicy;
+  try { activePolicy = await readRuntimePolicy(); } catch (error) {
+    ctx.error(`[broker] runtime-policy-unavailable: ${error.message}`);
+    return { status: 503, jsonBody: { error: 'broker policy unavailable' } };
+  }
   const { roles, oid, azp } = rolesFromPrincipal(req);
   const args = {
     principal: { oid, azp, roles, ...(genericEvidence?.length ? { groups: genericEvidence } : {}) },
     routeSlug: String(req.params?.routeSlug || '').toLowerCase(),
-    roleSecretMap: ROLE_TO_SECRET,
+    roleSecretMap: activePolicy?.roleMap || ROLE_TO_SECRET,
     connectionGrantsJson: undefined,
     callerCorrelationId: req.headers.get('x-correlation-id'),
     idSource,
@@ -560,7 +606,7 @@ async function preflightHandler(req, ctx, { readConnectionGrants = () => process
   };
   let result;
   try {
-    result = runPreflight({ ...args, connectionGrantsJson: readConnectionGrants() });
+    result = runPreflight({ ...args, connectionGrantsJson: activePolicy?.grantsJson || readConnectionGrants() });
   } catch {
     // Grant configuration is private. Treat an invalid or unavailable document as a closed grant
     // gate, preserving the preflight's categorical, redacted surface.
@@ -574,20 +620,31 @@ function createPreflightHandler(dependencies) {
   return (req, ctx) => preflightHandler(req, ctx, dependencies);
 }
 
+// Keep preflight under the stable broker prefix without registering an
+// overlapping Functions route. The Functions host may choose a catch-all route
+// before a more-specific route, so `broker/preflight/<slug>` is dispatched here
+// before the remaining broker paths can reach the vendor proxy.
+async function brokerRouteHandler(req, ctx) {
+  const startedAt = Date.now();
+  const requestContent = captureRequestContent(req);
+  const path = String(req.params?.path || '');
+  const segments = path.split('/');
+  let result;
+  if (req.method === 'GET' && segments.length === 2 && segments[0] === 'preflight' && segments[1]) {
+    result = await preflightHandler({ headers: req.headers, params: { routeSlug: segments[1] } }, ctx);
+  } else {
+    result = await brokerHandler(req, ctx);
+  }
+  const principal = rolesFromPrincipal(req);
+  recordCall({ request: req, requestContent, result, startedAt, callerOid: principal.oid, callerAzp: principal.azp, route: path }).catch(() => undefined);
+  return result;
+}
+
 app.http('broker', {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   authLevel: 'anonymous', // Easy Auth enforces authN/authZ at the platform layer.
   route: 'broker/{*path}',
-  handler: brokerHandler,
-});
-
-app.http('preflight', {
-  methods: ['GET'],
-  authLevel: 'anonymous', // Easy Auth (or the configured OIDC mode above) authenticates the caller.
-  // Keep this under the broker base so clients configured with /api/broker use one
-  // stable public prefix. The route slug makes the proof authorization-specific.
-  route: 'broker/preflight/{routeSlug}',
-  handler: preflightHandler,
+  handler: brokerRouteHandler,
 });
 
 // Lightweight health/soak probe — no secret access, no vendor call. Surfaces per-instance uptime and
@@ -600,16 +657,17 @@ app.http('health', {
   methods: ['GET'],
   authLevel: 'anonymous',
   route: 'health',
-  handler: async () => ({
-    status: 200,
-    jsonBody: {
-      status: 'ok',
-      uptimeSec: Math.round((Date.now() - BOOTED_AT) / 1000),
-      oauthTokensCached: oauthTokenCache.size,
-      secretsCached: secretCache.size,
-      demoMode: DEMO_MODE,
-    },
-  }),
+  handler: async (req) => {
+    const startedAt = Date.now();
+    const requestContent = captureRequestContent(req);
+    const result = { status: 200, jsonBody: {
+      status: 'ok', uptimeSec: Math.round((Date.now() - BOOTED_AT) / 1000),
+      oauthTokensCached: oauthTokenCache.size, secretsCached: secretCache.size, demoMode: DEMO_MODE,
+    } };
+    const principal = rolesFromPrincipal(req);
+    recordCall({ request: req, requestContent, result, startedAt, callerOid: principal.oid, callerAzp: principal.azp, route: 'health' }).catch(() => undefined);
+    return result;
+  },
 });
 
-module.exports = { createBrokerHandler, createPreflightHandler };
+module.exports = { createBrokerHandler, createPreflightHandler, brokerRouteHandler };
