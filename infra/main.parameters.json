@@ -7,7 +7,6 @@
     "environmentName": { "value": "${AZURE_ENV_NAME}" },
     "tenantId": { "value": "${AZURE_TENANT_ID}" },
     "operatorObjectId": { "value": "${OPERATOR_OBJECT_ID}" },
-    "operatorRoleId": { "value": "${OPERATOR_ROLE_ID}" },
     "tags": {
       "value": {
         "CostCenter": "${AZURE_TAG_COST_CENTER}",
