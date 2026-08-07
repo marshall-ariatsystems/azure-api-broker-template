@@ -1,0 +1,772 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "1250664516507619664"
+    }
+  },
+  "parameters": {
+    "resourceGroupName": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource group that contains one broker environment."
+      }
+    },
+    "location": {
+      "type": "string"
+    },
+    "environmentName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 20
+    },
+    "tags": {
+      "type": "object"
+    },
+    "brokerClientId": {
+      "type": "string"
+    },
+    "adminClientId": {
+      "type": "string"
+    },
+    "tenantId": {
+      "type": "string",
+      "defaultValue": "[tenant().tenantId]"
+    },
+    "brokerMaximumInstances": {
+      "type": "int",
+      "defaultValue": 10,
+      "minValue": 1,
+      "maxValue": 1000,
+      "metadata": {
+        "description": "Maximum broker burst instances. A 2 GiB instance is one core."
+      }
+    },
+    "adminMaximumInstances": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "maxValue": 1000,
+      "metadata": {
+        "description": "Maximum admin burst instances. A 2 GiB instance is one core."
+      }
+    },
+    "alwaysReadyInstances": {
+      "type": "int",
+      "defaultValue": 0,
+      "minValue": 0,
+      "metadata": {
+        "description": "Always-ready instances. Zero keeps the Essentials profile scale-to-zero."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-11-01",
+      "name": "[parameters('resourceGroupName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('api-broker-{0}', parameters('environmentName'))]",
+      "resourceGroup": "[parameters('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "environmentName": {
+            "value": "[parameters('environmentName')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "brokerClientId": {
+            "value": "[parameters('brokerClientId')]"
+          },
+          "adminClientId": {
+            "value": "[parameters('adminClientId')]"
+          },
+          "tenantId": {
+            "value": "[parameters('tenantId')]"
+          },
+          "brokerMaximumInstances": {
+            "value": "[parameters('brokerMaximumInstances')]"
+          },
+          "adminMaximumInstances": {
+            "value": "[parameters('adminMaximumInstances')]"
+          },
+          "alwaysReadyInstances": {
+            "value": "[parameters('alwaysReadyInstances')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "5840690096943246044"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "environmentName": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 20
+            },
+            "tags": {
+              "type": "object"
+            },
+            "brokerClientId": {
+              "type": "string"
+            },
+            "adminClientId": {
+              "type": "string"
+            },
+            "tenantId": {
+              "type": "string"
+            },
+            "brokerMaximumInstances": {
+              "type": "int"
+            },
+            "adminMaximumInstances": {
+              "type": "int"
+            },
+            "alwaysReadyInstances": {
+              "type": "int"
+            }
+          },
+          "variables": {
+            "suffix": "[uniqueString(resourceGroup().id, parameters('environmentName'))]",
+            "prefix": "[format('apib-{0}', parameters('environmentName'))]",
+            "storageName": "[take(replace(format('{0}{1}', variables('prefix'), variables('suffix')), '-', ''), 24)]",
+            "vaultName": "[take(format('{0}-{1}-kv', variables('prefix'), variables('suffix')), 24)]",
+            "brokerName": "[take(format('{0}-{1}-broker', variables('prefix'), variables('suffix')), 60)]",
+            "adminName": "[take(format('{0}-{1}-admin', variables('prefix'), variables('suffix')), 60)]",
+            "entraIssuer": "[format('{0}{1}/v2.0', environment().authentication.loginEndpoint, parameters('tenantId'))]",
+            "blobOwnerRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+            "tableContributorRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')]",
+            "queueContributorRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+            "secretsUserRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+            "secretsOfficerRole": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[variables('storageName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "minimumTlsVersion": "TLS1_2",
+                "allowBlobPublicAccess": false,
+                "allowSharedKeyAccess": false,
+                "publicNetworkAccess": "Enabled",
+                "networkAcls": {
+                  "defaultAction": "Allow",
+                  "bypass": "AzureServices"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'brokerpackages')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'adminpackages')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/tableServices",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'brokerPolicy')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'brokerRateLimits')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/tableServices/tables",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'brokerAudit')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices', variables('storageName'), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-{1}-logs', variables('prefix'), variables('suffix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            },
+            {
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[format('{0}-{1}-insights', variables('prefix'), variables('suffix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "web",
+              "properties": {
+                "Application_Type": "web",
+                "IngestionMode": "LogAnalytics",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-{1}-logs', variables('prefix'), variables('suffix')))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-{1}-logs', variables('prefix'), variables('suffix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2023-07-01",
+              "name": "[variables('vaultName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "tenantId": "[parameters('tenantId')]",
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "enableRbacAuthorization": true,
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": 90,
+                "enablePurgeProtection": true,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}-plan', variables('brokerName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "functionapp",
+              "sku": {
+                "name": "FC1",
+                "tier": "FlexConsumption"
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}-plan', variables('adminName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "functionapp",
+              "sku": {
+                "name": "FC1",
+                "tier": "FlexConsumption"
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2024-04-01",
+              "name": "[variables('brokerName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'broker'))]",
+              "kind": "functionapp,linux",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('brokerName')))]",
+                "httpsOnly": true,
+                "publicNetworkAccess": "Enabled",
+                "siteConfig": {
+                  "minTlsVersion": "1.2",
+                  "ftpsState": "Disabled",
+                  "http20Enabled": true
+                },
+                "functionAppConfig": {
+                  "runtime": {
+                    "name": "node",
+                    "version": "22"
+                  },
+                  "scaleAndConcurrency": {
+                    "maximumInstanceCount": "[parameters('brokerMaximumInstances')]",
+                    "instanceMemoryMB": 2048,
+                    "alwaysReady": "[if(equals(parameters('alwaysReadyInstances'), 0), createArray(), createArray(createObject('name', 'http', 'instanceCount', parameters('alwaysReadyInstances'))))]"
+                  },
+                  "deployment": {
+                    "storage": {
+                      "type": "blobContainer",
+                      "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob, 'brokerpackages')]",
+                      "authentication": {
+                        "type": "SystemAssignedIdentity"
+                      }
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'brokerpackages')]",
+                "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('brokerName')))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2024-04-01",
+              "name": "[variables('adminName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'admin'))]",
+              "kind": "functionapp,linux",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('adminName')))]",
+                "httpsOnly": true,
+                "publicNetworkAccess": "Enabled",
+                "siteConfig": {
+                  "minTlsVersion": "1.2",
+                  "ftpsState": "Disabled",
+                  "http20Enabled": true
+                },
+                "functionAppConfig": {
+                  "runtime": {
+                    "name": "node",
+                    "version": "22"
+                  },
+                  "scaleAndConcurrency": {
+                    "maximumInstanceCount": "[parameters('adminMaximumInstances')]",
+                    "instanceMemoryMB": 2048,
+                    "alwaysReady": "[if(equals(parameters('alwaysReadyInstances'), 0), createArray(), createArray(createObject('name', 'http', 'instanceCount', parameters('alwaysReadyInstances'))))]"
+                  },
+                  "deployment": {
+                    "storage": {
+                      "type": "blobContainer",
+                      "value": "[format('{0}{1}', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob, 'adminpackages')]",
+                      "authentication": {
+                        "type": "SystemAssignedIdentity"
+                      }
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'adminpackages')]",
+                "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', variables('adminName')))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}/{1}', variables('brokerName'), 'appsettings')]",
+              "properties": {
+                "KEYVAULT_URI": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), '2023-07-01').vaultUri]",
+                "POLICY_STORAGE_ACCOUNT": "[variables('storageName')]",
+                "POLICY_TABLE_NAME": "brokerPolicy",
+                "POLICY_KEY_PREFIX": "broker",
+                "POLICY_CACHE_TTL_SECONDS": "15",
+                "RATE_LIMIT_STORAGE_ACCOUNT": "[variables('storageName')]",
+                "RATE_LIMIT_TABLE_NAME": "brokerRateLimits",
+                "RATE_LIMIT_FAIL_MODE": "closed",
+                "QUOTA_CALLER_PER_MIN": "60",
+                "QUOTA_KEY_PER_MIN": "600",
+                "BROKER_AUDIT_STORAGE_ACCOUNT": "[variables('storageName')]",
+                "BROKER_AUDIT_TABLE_NAME": "brokerAudit",
+                "SECRET_CACHE_TTL_SECONDS": "300",
+                "ROLE_SECRET_MAP": "{}",
+                "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', format('{0}-{1}-insights', variables('prefix'), variables('suffix'))), '2020-02-02').ConnectionString]",
+                "AzureWebJobsStorage": "",
+                "AzureWebJobsStorage__accountName": "[variables('storageName')]",
+                "AzureWebJobsStorage__credential": "managedidentity"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageName'), 'default', 'brokerAudit')]",
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]",
+                "[resourceId('Microsoft.Insights/components', format('{0}-{1}-insights', variables('prefix'), variables('suffix')))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageName'), 'default', 'brokerPolicy')]",
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageName'), 'default', 'brokerRateLimits')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}/{1}', variables('adminName'), 'appsettings')]",
+              "properties": {
+                "KEYVAULT_URI": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), '2023-07-01').vaultUri]",
+                "POLICY_STORAGE_ACCOUNT": "[variables('storageName')]",
+                "POLICY_TABLE_NAME": "brokerPolicy",
+                "POLICY_KEY_PREFIX": "broker",
+                "AUDIT_STORAGE_ACCOUNT": "[variables('storageName')]",
+                "AUDIT_TABLE_NAME": "brokerAudit",
+                "OPERATOR_ROLE": "Broker.Operator",
+                "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', format('{0}-{1}-insights', variables('prefix'), variables('suffix'))), '2020-02-02').ConnectionString]",
+                "AzureWebJobsStorage": "",
+                "AzureWebJobsStorage__accountName": "[variables('storageName')]",
+                "AzureWebJobsStorage__credential": "managedidentity"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageName'), 'default', 'brokerAudit')]",
+                "[resourceId('Microsoft.Insights/components', format('{0}-{1}-insights', variables('prefix'), variables('suffix')))]",
+                "[resourceId('Microsoft.Storage/storageAccounts/tableServices/tables', variables('storageName'), 'default', 'brokerPolicy')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}/{1}', variables('brokerName'), 'authsettingsV2')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "requireAuthentication": true,
+                  "unauthenticatedClientAction": "Return401",
+                  "excludedPaths": []
+                },
+                "httpSettings": {
+                  "requireHttps": true,
+                  "forwardProxy": {
+                    "convention": "NoProxy"
+                  }
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[variables('entraIssuer')]",
+                      "clientId": "[parameters('brokerClientId')]"
+                    },
+                    "validation": {
+                      "allowedAudiences": [
+                        "[parameters('brokerClientId')]",
+                        "[format('api://{0}', parameters('brokerClientId'))]"
+                      ],
+                      "defaultAuthorizationPolicy": {
+                        "allowedApplications": [],
+                        "allowedPrincipals": {}
+                      }
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2024-04-01",
+              "name": "[format('{0}/{1}', variables('adminName'), 'authsettingsV2')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "requireAuthentication": true,
+                  "unauthenticatedClientAction": "RedirectToLoginPage",
+                  "excludedPaths": []
+                },
+                "httpSettings": {
+                  "requireHttps": true,
+                  "forwardProxy": {
+                    "convention": "NoProxy"
+                  }
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[variables('entraIssuer')]",
+                      "clientId": "[parameters('adminClientId')]"
+                    },
+                    "validation": {
+                      "allowedAudiences": [
+                        "[parameters('adminClientId')]",
+                        "[format('api://{0}', parameters('adminClientId'))]"
+                      ],
+                      "defaultAuthorizationPolicy": {
+                        "allowedApplications": [],
+                        "allowedPrincipals": {}
+                      }
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('brokerName')), 'blob')]",
+              "properties": {
+                "roleDefinitionId": "[variables('blobOwnerRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('brokerName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('brokerName')), 'table')]",
+              "properties": {
+                "roleDefinitionId": "[variables('tableContributorRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('brokerName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('brokerName')), 'queue')]",
+              "properties": {
+                "roleDefinitionId": "[variables('queueContributorRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('brokerName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]",
+              "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), resourceId('Microsoft.Web/sites', variables('brokerName')), 'secrets-user')]",
+              "properties": {
+                "roleDefinitionId": "[variables('secretsUserRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('brokerName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('brokerName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('adminName')), 'blob')]",
+              "properties": {
+                "roleDefinitionId": "[variables('blobOwnerRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('adminName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('adminName')), 'table')]",
+              "properties": {
+                "roleDefinitionId": "[variables('tableContributorRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('adminName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.Web/sites', variables('adminName')), 'queue')]",
+              "properties": {
+                "roleDefinitionId": "[variables('queueContributorRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('adminName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]",
+              "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), resourceId('Microsoft.Web/sites', variables('adminName')), 'secrets-officer')]",
+              "properties": {
+                "roleDefinitionId": "[variables('secretsOfficerRole')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('adminName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('adminName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "brokerName": {
+              "type": "string",
+              "value": "[variables('brokerName')]"
+            },
+            "brokerUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', variables('brokerName')), '2024-04-01').defaultHostName)]"
+            },
+            "adminName": {
+              "type": "string",
+              "value": "[variables('adminName')]"
+            },
+            "adminUrl": {
+              "type": "string",
+              "value": "[format('https://{0}/console', reference(resourceId('Microsoft.Web/sites', variables('adminName')), '2024-04-01').defaultHostName)]"
+            },
+            "storageAccountName": {
+              "type": "string",
+              "value": "[variables('storageName')]"
+            },
+            "keyVaultName": {
+              "type": "string",
+              "value": "[variables('vaultName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "brokerName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerName.value]"
+    },
+    "brokerUrl": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerUrl.value]"
+    },
+    "adminName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminName.value]"
+    },
+    "adminUrl": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminUrl.value]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.storageAccountName.value]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.keyVaultName.value]"
+    },
+    "AZURE_BROKER_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerName.value]"
+    },
+    "AZURE_BROKER_URL": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.brokerUrl.value]"
+    },
+    "AZURE_ADMIN_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminName.value]"
+    },
+    "AZURE_ADMIN_URL": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.adminUrl.value]"
+    },
+    "AZURE_STORAGE_ACCOUNT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.storageAccountName.value]"
+    },
+    "AZURE_KEY_VAULT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', format('api-broker-{0}', parameters('environmentName'))), '2025-04-01').outputs.keyVaultName.value]"
+    }
+  }
+}
