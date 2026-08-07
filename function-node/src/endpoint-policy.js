@@ -42,9 +42,14 @@ function rejectUnknownKeys(value, allowed, message) {
 function normalizePath(subpath) {
   const raw = typeof subpath === 'string' ? subpath : '';
   const noQuery = raw.split('?')[0].split('#')[0];
-  const withSlash = noQuery.startsWith('/') ? noQuery : `/${noQuery}`;
+  let decoded;
+  try { decoded = decodeURIComponent(noQuery); } catch { fail('endpoint path is invalid'); }
+  if (decoded.includes('\\') || decoded.includes('\0')) fail('endpoint path is invalid');
+  const withSlash = decoded.startsWith('/') ? decoded : `/${decoded}`;
   // Collapse duplicate slashes so "/v1//models" cannot dodge an exact-match rule.
-  return withSlash.replace(/\/{2,}/g, '/');
+  const normalized = withSlash.replace(/\/{2,}/g, '/');
+  if (normalized.split('/').some((segment) => segment === '.' || segment === '..')) fail('endpoint path is invalid');
+  return normalized;
 }
 
 // Parse + validate an `endpoints` object into a frozen policy. Returns null when the connection
@@ -84,7 +89,8 @@ function normalizeEndpointPolicy(raw) {
 
 function ruleMatches(rule, method, path) {
   if (rule.methods && !rule.methods.includes(method)) return false;
-  return rule.prefix ? path.startsWith(rule.path) : path === rule.path;
+  if (!rule.prefix) return path === rule.path;
+  return path === rule.path || path.startsWith(rule.path.endsWith('/') ? rule.path : `${rule.path}/`);
 }
 
 // Evaluate a request against a normalized policy. A null policy is unrestricted (allow). Anything
@@ -95,7 +101,8 @@ function evaluateEndpointPolicy(policy, { method, subpath } = {}) {
     return { allowed: false, reason: 'endpoint policy malformed' };
   }
   const normalizedMethod = String(method || '').toUpperCase();
-  const path = normalizePath(subpath);
+  let path;
+  try { path = normalizePath(subpath); } catch { return { allowed: false, reason: 'endpoint path malformed' }; }
   const matched = policy.rules.some((rule) => ruleMatches(rule, normalizedMethod, path));
   if (policy.mode === 'allow') {
     return matched ? { allowed: true, reason: 'allow-listed' } : { allowed: false, reason: 'not on allow-list' };

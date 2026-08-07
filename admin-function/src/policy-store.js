@@ -1,15 +1,34 @@
 'use strict';
 
 const { AppConfigurationClient } = require('@azure/app-configuration');
+const { TableClient } = require('@azure/data-tables');
 const { DefaultAzureCredential } = require('@azure/identity');
 
-const ROLE_MAP_KEY = 'ariat:broker:role-map';
-const GRANTS_KEY = 'ariat:broker:connection-grants';
-const VENDORS_KEY = 'ariat:broker:vendor-profiles';
-const PRINCIPALS_KEY = 'ariat:broker:principal-profiles';
+const PREFIX = process.env.POLICY_KEY_PREFIX || 'broker';
+const ROLE_MAP_KEY = `${PREFIX}:role-map`;
+const GRANTS_KEY = `${PREFIX}:connection-grants`;
+const VENDORS_KEY = `${PREFIX}:vendor-profiles`;
+const PRINCIPALS_KEY = `${PREFIX}:principal-profiles`;
+const BRANDING_KEY = `${PREFIX}:branding`;
 const CONTENT_TYPE = 'application/json';
 const MAX_BYTES = 64 * 1024;
 const OWN = Object.prototype.hasOwnProperty;
+const DEFAULTS = Object.freeze({
+  [ROLE_MAP_KEY]: Object.freeze({}),
+  [GRANTS_KEY]: Object.freeze({ schemaVersion: 1, version: 1, connections: [] }),
+  [VENDORS_KEY]: Object.freeze({ schemaVersion: 1, version: 1, vendors: [] }),
+  [PRINCIPALS_KEY]: Object.freeze({ schemaVersion: 1, version: 1, principals: [] }),
+  [BRANDING_KEY]: Object.freeze({
+    schemaVersion: 1,
+    productName: 'Azure API Broker',
+    shortName: 'API Broker',
+    supportUrl: '',
+    documentationUrl: '',
+    logoUrl: '',
+    faviconUrl: '',
+    colors: { background: '#0f1319', surface: '#171d26', accent: '#4da3ff', text: '#dde5ee' },
+  }),
+});
 
 function fail(message) { throw new TypeError(message); }
 function json(value, name) {
@@ -53,64 +72,97 @@ function principals(value) {
   }
   return value;
 }
+function branding(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.schemaVersion !== 1) fail('branding is invalid');
+  const allowed = ['schemaVersion', 'productName', 'shortName', 'supportUrl', 'documentationUrl', 'logoUrl', 'faviconUrl', 'colors'];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) fail('branding is invalid');
+  for (const field of ['productName', 'shortName']) if (typeof value[field] !== 'string' || !value[field].trim() || value[field].length > 80) fail('branding is invalid');
+  for (const field of ['supportUrl', 'documentationUrl', 'logoUrl', 'faviconUrl']) {
+    if (value[field] !== '' && (typeof value[field] !== 'string' || value[field].length > 512 || !/^https:\/\//.test(value[field]))) fail('branding is invalid');
+  }
+  if (!value.colors || typeof value.colors !== 'object' || Array.isArray(value.colors) || Object.keys(value.colors).some((key) => !['background', 'surface', 'accent', 'text'].includes(key))) fail('branding is invalid');
+  for (const field of ['background', 'surface', 'accent', 'text']) if (!/^#[0-9a-fA-F]{6}$/.test(value.colors[field] || '')) fail('branding is invalid');
+  return { ...value, productName: value.productName.trim(), shortName: value.shortName.trim() };
+}
+
+function validateDocument(key, value) {
+  if (key === ROLE_MAP_KEY) return roleMap(value);
+  if (key === GRANTS_KEY) return grants(value);
+  if (key === VENDORS_KEY) return vendors(value);
+  if (key === PRINCIPALS_KEY) return principals(value);
+  if (key === BRANDING_KEY) return branding(value);
+  fail('policy document is invalid');
+}
 
 class PolicyStore {
-  constructor({ endpoint, credential = new DefaultAzureCredential(), client } = {}) {
-    if (typeof endpoint !== 'string' || !/^https:\/\//.test(endpoint)) throw new TypeError('App Configuration endpoint is required');
-    this.client = client || new AppConfigurationClient(endpoint, credential);
+  constructor({ endpoint, storageAccount, tableName = 'brokerPolicy', credential = new DefaultAzureCredential(), client } = {}) {
+    if (client) {
+      this.mode = endpoint ? 'appconfig' : 'table';
+      this.client = client;
+    } else if (storageAccount) {
+      if (!/^[a-z0-9]{3,24}$/.test(storageAccount)) throw new TypeError('policy storage account is invalid');
+      this.mode = 'table';
+      this.client = new TableClient(`https://${storageAccount}.table.core.windows.net`, tableName, credential);
+    } else if (typeof endpoint === 'string' && /^https:\/\//.test(endpoint)) {
+      this.mode = 'appconfig';
+      this.client = new AppConfigurationClient(endpoint, credential);
+    } else {
+      throw new TypeError('policy storage is required');
+    }
+  }
+
+  async get(key) {
+    if (this.mode === 'appconfig') {
+      const setting = await this.client.getConfigurationSetting({ key }).catch((error) => error.statusCode === 404 ? null : Promise.reject(error));
+      return setting ? { value: validateDocument(key, json(setting.value, key)), etag: setting.etag } : { value: DEFAULTS[key], etag: undefined };
+    }
+    const entity = await this.client.getEntity('policy', key).catch((error) => error.statusCode === 404 ? null : Promise.reject(error));
+    return entity ? { value: validateDocument(key, json(entity.document, key)), etag: entity.etag } : { value: DEFAULTS[key], etag: undefined };
+  }
+
+  async set(key, document, etag) {
+    validateDocument(key, document);
+    const value = JSON.stringify(document);
+    if (Buffer.byteLength(value, 'utf8') > MAX_BYTES) fail('policy document is invalid');
+    if (this.mode === 'appconfig') return this.client.setConfigurationSetting({ key, value, contentType: CONTENT_TYPE, ...(etag ? { onlyIfUnchanged: true, etag } : {}) });
+    const entity = { partitionKey: 'policy', rowKey: key, schemaVersion: document.schemaVersion || 1, document: value, updatedAt: new Date().toISOString() };
+    if (etag) return this.client.updateEntity(entity, 'Replace', { etag });
+    try { return await this.client.createEntity(entity); } catch (error) {
+      if (error.statusCode !== 409) throw error;
+      const conflict = new Error('policy changed; reload and retry'); conflict.status = 409; throw conflict;
+    }
   }
 
   async read() {
-    const [roleMapSetting, grantSetting, vendorSetting, principalSetting] = await Promise.all([
-      this.client.getConfigurationSetting({ key: ROLE_MAP_KEY }),
-      this.client.getConfigurationSetting({ key: GRANTS_KEY }),
-      this.client.getConfigurationSetting({ key: VENDORS_KEY }).catch((error) => error.statusCode === 404 ? null : Promise.reject(error)),
-      this.client.getConfigurationSetting({ key: PRINCIPALS_KEY }).catch((error) => error.statusCode === 404 ? null : Promise.reject(error)),
+    const [roleMapSetting, grantSetting, vendorSetting, principalSetting, brandingSetting] = await Promise.all([
+      this.get(ROLE_MAP_KEY), this.get(GRANTS_KEY), this.get(VENDORS_KEY), this.get(PRINCIPALS_KEY), this.get(BRANDING_KEY),
     ]);
     return Object.freeze({
-      roleMap: roleMap(json(roleMapSetting.value, 'role map')),
-      grants: grants(json(grantSetting.value, 'connection grants')),
-      vendors: vendorSetting ? vendors(json(vendorSetting.value, 'vendor profiles')) : Object.freeze({ version: 1, vendors: [] }),
-      principals: principalSetting ? principals(json(principalSetting.value, 'principal profiles')) : Object.freeze({ version: 1, principals: [] }),
-      etags: Object.freeze({ roleMap: roleMapSetting.etag, grants: grantSetting.etag, vendors: vendorSetting?.etag, principals: principalSetting?.etag }),
+      roleMap: roleMapSetting.value,
+      grants: grantSetting.value,
+      vendors: vendorSetting.value,
+      principals: principalSetting.value,
+      branding: brandingSetting.value,
+      etags: Object.freeze({ roleMap: roleMapSetting.etag, grants: grantSetting.etag, vendors: vendorSetting.etag, principals: principalSetting.etag, branding: brandingSetting.etag }),
     });
   }
 
   async writeGrants(document, etag) {
-    grants(document);
-    const value = JSON.stringify(document);
-    if (Buffer.byteLength(value, 'utf8') > MAX_BYTES) fail('connection grants are invalid');
-    return this.client.setConfigurationSetting({
-      key: GRANTS_KEY,
-      value,
-      contentType: CONTENT_TYPE,
-      ...(etag ? { onlyIfUnchanged: true, etag } : {}),
-    });
+    return this.set(GRANTS_KEY, document, etag);
   }
 
   async writeRoleMap(document, etag) {
-    roleMap(document);
-    const value = JSON.stringify(document);
-    if (Buffer.byteLength(value, 'utf8') > MAX_BYTES) fail('role map is invalid');
-    return this.client.setConfigurationSetting({
-      key: ROLE_MAP_KEY,
-      value,
-      contentType: CONTENT_TYPE,
-      ...(etag ? { onlyIfUnchanged: true, etag } : {}),
-    });
+    return this.set(ROLE_MAP_KEY, document, etag);
   }
 
   async writeVendors(document, etag) {
-    vendors(document);
-    const value = JSON.stringify(document);
-    if (Buffer.byteLength(value, 'utf8') > MAX_BYTES) fail('vendor profiles are invalid');
-    return this.client.setConfigurationSetting({ key: VENDORS_KEY, value, contentType: CONTENT_TYPE, ...(etag ? { onlyIfUnchanged: true, etag } : {}) });
+    return this.set(VENDORS_KEY, document, etag);
   }
   async writePrincipals(document, etag) {
-    principals(document);
-    const value = JSON.stringify(document);
-    if (Buffer.byteLength(value, 'utf8') > MAX_BYTES) fail('principal profiles are invalid');
-    return this.client.setConfigurationSetting({ key: PRINCIPALS_KEY, value, contentType: CONTENT_TYPE, ...(etag ? { onlyIfUnchanged: true, etag } : {}) });
+    return this.set(PRINCIPALS_KEY, document, etag);
+  }
+  async writeBranding(document, etag) {
+    return this.set(BRANDING_KEY, document, etag);
   }
 }
 
@@ -172,4 +224,4 @@ function mutateGrant(document, connectionId, kind, subject, remove = false) {
   return copy;
 }
 
-module.exports = { PolicyStore, ROLE_MAP_KEY, GRANTS_KEY, VENDORS_KEY, PRINCIPALS_KEY, publicConnections, mutateGrant, connectionIdForRole, vendorIdFor, updateConnectionStatus, recordRotation };
+module.exports = { PolicyStore, ROLE_MAP_KEY, GRANTS_KEY, VENDORS_KEY, PRINCIPALS_KEY, BRANDING_KEY, publicConnections, mutateGrant, connectionIdForRole, vendorIdFor, updateConnectionStatus, recordRotation, branding };

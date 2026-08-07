@@ -1,12 +1,12 @@
 {
-  "name": "tessera-operator-console",
+  "name": "azure-api-broker-admin",
   "version": "0.2.0",
   "private": true,
-  "description": "Private Azure-native operator console for Tessera broker connections.",
+  "description": "Entra-governed operator console for Azure API Broker connections.",
   "main": "src/admin.js",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "sh -c 'for file in src/*.js; do node --check \"$file\"; done'"
+    "test": "sh -c 'for file in src/*.js public/*.js; do node --check \"$file\"; done && node --test src/*.test.mjs'"
   },
   "dependencies": {
     "@azure/app-configuration": "^1.8.0",

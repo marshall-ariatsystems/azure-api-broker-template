@@ -1,11 +1,11 @@
 {
-  "name": "broker-cxapi",
+  "name": "azure-api-broker-runtime",
   "version": "0.1.0",
   "description": "Minimal Entra-fronted vendor key broker (Node 22, Flex Consumption).",
   "main": "src/*.js",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "sh -c 'for file in src/*.js; do node --check \"$file\"; done'"
+    "test": "sh -c 'for file in src/*.js; do node --check \"$file\"; done && node --test src/*.test.mjs'"
   },
   "dependencies": {
     "@tessera/build-sdk": "file:../sdk",

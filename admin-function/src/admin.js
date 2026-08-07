@@ -9,16 +9,19 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { PolicyStore, publicConnections, mutateGrant, vendorIdFor, updateConnectionStatus, recordRotation } = require('./policy-store');
 
-const OPERATOR_ROLE = 'Ariat.Operator';
+const OPERATOR_ROLE = process.env.OPERATOR_ROLE || 'Broker.Operator';
+const API_VERSION = 'v1';
 const MAX_BODY = 64 * 1024;
 const credential = new DefaultAzureCredential();
-const policyStore = process.env.APP_CONFIG_ENDPOINT ? new PolicyStore({ endpoint: process.env.APP_CONFIG_ENDPOINT, credential }) : null;
+const policyStore = process.env.POLICY_STORAGE_ACCOUNT
+  ? new PolicyStore({ storageAccount: process.env.POLICY_STORAGE_ACCOUNT, tableName: process.env.POLICY_TABLE_NAME || 'brokerPolicy', credential })
+  : process.env.APP_CONFIG_ENDPOINT ? new PolicyStore({ endpoint: process.env.APP_CONFIG_ENDPOINT, credential }) : null;
 const secretClient = process.env.KEYVAULT_URI ? new SecretClient(process.env.KEYVAULT_URI, credential) : null;
 const auditTable = process.env.AUDIT_STORAGE_ACCOUNT
   ? new TableClient(`https://${process.env.AUDIT_STORAGE_ACCOUNT}.table.core.windows.net`, process.env.AUDIT_TABLE_NAME || 'operatorAudit', credential)
   : null;
 
-function response(status, jsonBody) { return { status, jsonBody, headers: { 'cache-control': 'no-store' } }; }
+function response(status, jsonBody, headers = {}) { return { status, jsonBody, headers: { 'cache-control': 'no-store', 'x-api-version': API_VERSION, ...headers } }; }
 function principal(request) {
   const encoded = request.headers.get('x-ms-client-principal');
   if (!encoded) return { oid: null, roles: [] };
@@ -44,7 +47,7 @@ async function audit(actor, action, connectionId, outcome, metadata = {}) {
   await auditTable.createTable().catch(() => undefined);
   await auditTable.createEntity({ partitionKey: connectionId, rowKey: crypto.randomUUID(), at: new Date().toISOString(), actor: actor.oid, action, outcome, ...metadata });
 }
-function configured() { if (!policyStore || !secretClient) { const error = new Error('management service misconfigured'); error.status = 503; throw error; } }
+function configured({ secrets = false } = {}) { if (!policyStore || (secrets && !secretClient)) { const error = new Error('management service misconfigured'); error.status = 503; throw error; } }
 function safeGrants(doc, connectionId) {
   const entry = doc.connections.find((item) => item.id === connectionId);
   return entry ? { id: entry.id, subjects: entry.subjects || [], groups: entry.groups || [], workloads: entry.workloads || [] } : { id: connectionId, subjects: [], groups: [], workloads: [] };
@@ -157,8 +160,23 @@ function monitoring(events) {
 async function api(request, context) {
   let actor;
   try {
-    actor = requireOperator(request); configured();
-    const path = request.params.path || '';
+    const rawPath = request.params.path || '';
+    const path = rawPath.startsWith(`${API_VERSION}/`) ? rawPath.slice(API_VERSION.length + 1) : rawPath;
+    configured();
+    if (request.method === 'GET' && path === 'config/branding') {
+      const current = await policyStore.read();
+      return response(200, { branding: current.branding }, { 'cache-control': 'public, max-age=300' });
+    }
+    if (request.method === 'GET' && path === 'system/version') return response(200, { apiVersion: API_VERSION, schemaVersion: 1, service: 'admin' });
+    actor = requireOperator(request);
+    if (request.method === 'POST' && path === 'config/branding') {
+      const current = await policyStore.read();
+      const input = await body(request);
+      const next = { schemaVersion: 1, ...input };
+      await policyStore.writeBranding(next, current.etags.branding);
+      await audit(actor, 'branding.updated', 'branding', 'allowed');
+      return response(200, { branding: next });
+    }
     if (request.method === 'GET' && path === 'dashboard') {
       const current = await policyStore.read();
       const connections = await connectionsWithRotation(current.roleMap);
@@ -225,6 +243,7 @@ async function api(request, context) {
     const credentialMatch = /^connections\/([^/]+)\/credential$/.exec(path);
     if (credentialMatch && request.method === 'POST') {
       const connectionId = decodeURIComponent(credentialMatch[1]);
+      configured({ secrets: true });
       const current = await policyStore.read();
       const found = findConnection(current.roleMap, connectionId);
       const input = await body(request);
@@ -251,23 +270,19 @@ async function api(request, context) {
     return response(404, { error: 'not found' });
   } catch (error) {
     context.error(`[operator] ${error.message}`);
-    const status = error.status === 403 ? 403 : error.status === 404 ? 404 : error.status === 503 ? 503 : 400;
-    return response(status, { error: status === 403 ? 'forbidden' : status === 404 ? 'not found' : status === 503 ? 'unavailable' : 'invalid request' });
+    const status = error.status === 403 ? 403 : error.status === 404 ? 404 : error.status === 409 ? 409 : error.status === 503 ? 503 : 400;
+    return response(status, { error: status === 403 ? 'forbidden' : status === 404 ? 'not found' : status === 409 ? 'conflict' : status === 503 ? 'unavailable' : 'invalid request' });
   }
 }
 
 app.http('operatorApi', { methods: ['GET', 'POST', 'DELETE'], authLevel: 'anonymous', route: 'api/{*path}', handler: api });
-app.http('operatorConsole', {
-  methods: ['GET'], authLevel: 'anonymous', route: 'console',
-  handler: async () => {
-    const [html, guided, monitor] = await Promise.all([readFile(path.resolve(__dirname, '../public/index.html'), 'utf8'), readFile(path.resolve(__dirname, '../public/guided-ui.js'), 'utf8'), readFile(path.resolve(__dirname, '../public/client-monitor.js'), 'utf8')]);
-    return { status: 200, body: html.replace('<script>', `<script>${monitor}</script><script>`).replace('</body>', `<script>${guided}</script></body>`), headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } };
-  },
-});
+async function staticFile(file, contentType, cache = 'no-store') {
+  return { status: 200, body: await readFile(path.resolve(__dirname, `../public/${file}`)), headers: { 'content-type': contentType, 'cache-control': cache, 'x-content-type-options': 'nosniff' } };
+}
+app.http('operatorConsole', { methods: ['GET'], authLevel: 'anonymous', route: 'console', handler: () => staticFile('index.html', 'text/html; charset=utf-8') });
 app.http('operatorKeyConsole', {
   methods: ['GET'], authLevel: 'anonymous', route: 'console/keys/{*path}',
-  handler: async () => {
-    const [html, guided, monitor] = await Promise.all([readFile(path.resolve(__dirname, '../public/index.html'), 'utf8'), readFile(path.resolve(__dirname, '../public/guided-ui.js'), 'utf8'), readFile(path.resolve(__dirname, '../public/client-monitor.js'), 'utf8')]);
-    return { status: 200, body: html.replace('<script>', `<script>${monitor}</script><script>`).replace('</body>', `<script>${guided}</script></body>`), headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } };
-  },
+  handler: () => staticFile('index.html', 'text/html; charset=utf-8'),
 });
+app.http('operatorConsoleApp', { methods: ['GET'], authLevel: 'anonymous', route: 'console/app.js', handler: () => staticFile('app.js', 'text/javascript; charset=utf-8', 'public, max-age=300') });
+app.http('operatorConsoleStyles', { methods: ['GET'], authLevel: 'anonymous', route: 'console/style.css', handler: () => staticFile('style.css', 'text/css; charset=utf-8', 'public, max-age=300') });

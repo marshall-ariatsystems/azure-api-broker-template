@@ -46,6 +46,14 @@ test('prefix rules match a subtree', () => {
   // Exact-only rule does not match a child path.
   const exact = normalizeEndpointPolicy({ mode: 'allow', rules: [{ path: '/v1/models' }] });
   assert.equal(evaluateEndpointPolicy(exact, { method: 'GET', subpath: 'v1/models/gpt-4o' }).allowed, false);
+  assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: 'v1/models-evil' }).allowed, false);
+});
+
+test('encoded separators and dot segments cannot bypass path rules', () => {
+  const policy = normalizeEndpointPolicy({ mode: 'allow', rules: [{ path: '/v1/models', prefix: true }] });
+  assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models/%2e%2e/secrets' }).allowed, false);
+  assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models%2f..%2fsecrets' }).allowed, false);
+  assert.equal(evaluateEndpointPolicy(policy, { method: 'GET', subpath: '/v1/models%5cadmin' }).allowed, false);
 });
 
 test('deny mode is default-allow: only listed endpoints are blocked', () => {
