@@ -81,6 +81,6 @@
   </div>
 
   <dialog id="connection-dialog"><form method="dialog" id="connection-form"><div class="dialog-head"><h2>Add a broker route</h2><button value="cancel" class="btn btn-ghost" aria-label="Close">Close</button></div><label>Vendor ID<input id="new-vendor" required pattern="[a-z0-9][a-z0-9-]{0,63}" placeholder="ninjaone"></label><label>Display name<input id="new-display" required maxlength="128"></label><label>Upstream base URL<input id="new-base-url" required type="url" placeholder="https://api.vendor.example"></label><label>Injection mode<select id="new-inject"><option value="header">API key header</option><option value="bearer">Bearer token</option><option value="basic">Basic credentials</option><option value="oauth2cc">OAuth client credentials</option><option value="entra">Managed identity token</option></select></label><label>Key Vault secret name<input id="new-secret" required pattern="[0-9A-Za-z-]{1,127}"></label><div class="dialog-actions"><button value="cancel" class="btn btn-ghost">Cancel</button><button id="create-connection" value="default" class="btn btn-primary">Create route</button></div></form></dialog>
-  <script src="/console/app.js" defer></script>
+  <script src="/console/app.js?v=20260807-auth-session" defer></script>
 </body>
 </html>

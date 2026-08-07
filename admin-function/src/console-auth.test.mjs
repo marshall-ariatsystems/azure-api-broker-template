@@ -4,9 +4,11 @@ import test from 'node:test';
 
 test('console determines sign-in through the protected management API', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 
   assert.doesNotMatch(source, /\/\.auth\/me/);
   assert.match(source, /error\.status = response\.status/);
   assert.match(source, /error\.status === 401/);
   assert.match(source, /error\.status === 403/);
+  assert.match(html, /\/console\/app\.js\?v=[a-zA-Z0-9-]+/);
 });
