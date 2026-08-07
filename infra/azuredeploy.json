@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "3502512067321708776"
+      "templateHash": "13662074932867550719"
     }
   },
   "parameters": {
@@ -35,6 +35,13 @@
       "type": "string",
       "metadata": {
         "description": "Object ID of the first operator to receive the Broker.Operator app role."
+      }
+    },
+    "operatorRoleId": {
+      "type": "string",
+      "defaultValue": "[guid(tenant().tenantId, parameters('resourceGroupName'), parameters('environmentName'), 'Broker.Operator')]",
+      "metadata": {
+        "description": "Stable ID of the Broker.Operator app role. Existing deployments should preserve their current role ID."
       }
     },
     "brokerPackageUri": {
@@ -83,8 +90,7 @@
     "prefix": "[format('apib-{0}', parameters('environmentName'))]",
     "adminName": "[take(format('{0}-{1}-admin', variables('prefix'), variables('suffix')), 60)]",
     "brokerUniqueName": "[format('api-broker-{0}-{1}-broker', parameters('resourceGroupName'), parameters('environmentName'))]",
-    "adminUniqueName": "[format('api-broker-{0}-{1}-admin', parameters('resourceGroupName'), parameters('environmentName'))]",
-    "operatorRoleId": "[guid(tenant().tenantId, parameters('resourceGroupName'), parameters('environmentName'), 'Broker.Operator')]"
+    "adminUniqueName": "[format('api-broker-{0}-{1}-admin', parameters('resourceGroupName'), parameters('environmentName'))]"
   },
   "imports": {
     "MicrosoftGraph": {
@@ -126,7 +132,7 @@
             ],
             "description": "Administer API broker connections, grants, branding, and write-only credential rotation.",
             "displayName": "Broker operator",
-            "id": "[variables('operatorRoleId')]",
+            "id": "[parameters('operatorRoleId')]",
             "isEnabled": true,
             "value": "Broker.Operator"
           }
@@ -156,7 +162,7 @@
       "import": "MicrosoftGraph",
       "type": "Microsoft.Graph/appRoleAssignedTo@v1.0",
       "properties": {
-        "appRoleId": "[variables('operatorRoleId')]",
+        "appRoleId": "[parameters('operatorRoleId')]",
         "principalId": "[parameters('operatorObjectId')]",
         "resourceDisplayName": "[reference('adminApplication').displayName]",
         "resourceId": "[reference('adminServicePrincipal').id]"

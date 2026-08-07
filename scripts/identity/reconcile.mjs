@@ -50,9 +50,12 @@ function prepare() {
     patchApplication(admin.id, { appRoles: [...(admin.appRoles || []), operatorRole()] });
     admin = findApp(`Azure API Broker Admin ${environment}`);
   }
+  const role = (admin.appRoles || []).find((item) => item.value === 'Broker.Operator');
+  if (!role) fail('Broker.Operator role is missing after reconciliation');
   setEnv('BROKER_CLIENT_ID', broker.appId); setEnv('BROKER_APPLICATION_OBJECT_ID', broker.id); setEnv('BROKER_SERVICE_PRINCIPAL_ID', broker.servicePrincipalId);
   setEnv('ADMIN_CLIENT_ID', admin.appId); setEnv('ADMIN_APPLICATION_OBJECT_ID', admin.id); setEnv('ADMIN_SERVICE_PRINCIPAL_ID', admin.servicePrincipalId);
   setEnv('OPERATOR_OBJECT_ID', run('az', ['ad', 'signed-in-user', 'show', '--query', 'id', '-o', 'tsv']));
+  setEnv('OPERATOR_ROLE_ID', role.id);
   process.stdout.write('Entra applications reconciled without client credentials.\n');
 }
 function finalize() {
