@@ -128,9 +128,11 @@ resource brokerDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!emp
   name: 'onedeploy'
   parent: broker
   #disable-next-line BCP187
+  location: location
+  #disable-next-line BCP187
   properties: {
     packageUri: brokerPackageUri
-    remoteBuild: false
+    remoteBuild: true
   }
 }
 
@@ -138,9 +140,11 @@ resource adminDeployment 'Microsoft.Web/sites/extensions@2022-09-01' = if (!empt
   name: 'onedeploy'
   parent: admin
   #disable-next-line BCP187
+  location: location
+  #disable-next-line BCP187
   properties: {
     packageUri: adminPackageUri
-    remoteBuild: false
+    remoteBuild: true
   }
 }
 

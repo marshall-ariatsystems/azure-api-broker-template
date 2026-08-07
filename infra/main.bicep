@@ -15,9 +15,9 @@ param operatorObjectId string
 @description('Stable ID of the Broker.Operator app role. Existing deployments should preserve their current role ID.')
 param operatorRoleId string = guid(tenant().tenantId, resourceGroupName, environmentName, 'Broker.Operator')
 @description('Public or SAS URL for the broker Function package. Leave empty to provision infrastructure only.')
-param brokerPackageUri string = 'https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0/broker.zip?download=1'
+param brokerPackageUri string = 'https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0-broker/released-package.zip?download=1'
 @description('Public or SAS URL for the admin Function package. Leave empty to provision infrastructure only.')
-param adminPackageUri string = 'https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0/admin.zip?download=1'
+param adminPackageUri string = 'https://github.com/marshall-ariatsystems/azure-api-broker-template/releases/download/v0.3.0-admin/released-package.zip?download=1'
 @description('Maximum broker burst instances. A 2 GiB instance is one core.')
 @minValue(1)
 @maxValue(1000)
