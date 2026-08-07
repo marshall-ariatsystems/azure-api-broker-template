@@ -10,7 +10,11 @@ async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } });
   let value = {};
   try { value = await response.json(); } catch { /* no body */ }
-  if (!response.ok) throw new Error(value.error || `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const error = new Error(value.error || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
+  }
   $('api-status').textContent = `${response.headers.get('x-api-version') || 'v1'} · ${Math.round(performance.now() - started)}ms`;
   $('api-status').className = 'pill pill-ok';
   return value;
@@ -97,15 +101,24 @@ async function mutate(path, body, message, method = 'POST') {
 async function loadAll() {
   try {
     const branding = await api('/config/branding'); applyBranding(branding.branding); renderBrandingForm();
-    const identityResponse = await fetch('/.auth/me', { credentials: 'same-origin' });
-    const identities = identityResponse.ok ? await identityResponse.json() : [];
-    const signedIn = Array.isArray(identities) && identities.length > 0;
-    $('sign-in').hidden = signedIn; $('sign-out').hidden = !signedIn;
-    if (!signedIn) { $('api-status').textContent = 'sign in required'; $('api-status').className = 'pill pill-warn'; return; }
     const [dashboard, principals, logs] = await Promise.all([api('/dashboard'), api('/principals'), api('/logs')]);
+    $('sign-in').hidden = true; $('sign-out').hidden = false;
     state.dashboard = dashboard; state.connections = dashboard.connections || []; state.principals = principals.principals || []; state.events = logs.events || [];
     renderOverview(); renderConnections(); renderPrincipals(); renderAudit(); renderBrandingForm();
-  } catch (error) { $('api-status').textContent = 'unavailable'; $('api-status').className = 'pill pill-err'; flash(error.message, true); }
+  } catch (error) {
+    if (error.status === 401) {
+      $('sign-in').hidden = false; $('sign-out').hidden = true;
+      $('api-status').textContent = 'sign in required'; $('api-status').className = 'pill pill-warn';
+      return;
+    }
+    if (error.status === 403) {
+      $('sign-in').hidden = true; $('sign-out').hidden = false;
+      $('api-status').textContent = 'operator role required'; $('api-status').className = 'pill pill-err';
+      flash('Your account is signed in but does not have the Broker.Operator app role.', true);
+      return;
+    }
+    $('api-status').textContent = 'unavailable'; $('api-status').className = 'pill pill-err'; flash(error.message, true);
+  }
 }
 
 function showView(name) {
